@@ -1,2 +1,8 @@
 export * from './server.js'
 export * from './renderer.js'
+export * from './pet-library.js'
+export * from './settings-store.js'
+export * from './controller.js'
+export * from './ui-gateway.js'
+export { UI_PATH, createUiClient } from './ui-client.js'
+export type { UiClient, UiClientHandlers, UiClientOptions } from './ui-client.js'

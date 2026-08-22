@@ -38,7 +38,7 @@ export interface WsLike {
 }
 
 export interface WebSocketServerLike {
-  on(event: 'connection', listener: (socket: WsLike) => void): void
+  on(event: 'connection', listener: (socket: WsLike, req?: unknown) => void): void
   on(event: 'listening', listener: () => void): void
   on(event: 'error', listener: (error: Error) => void): void
   close(callback?: () => void): void
@@ -60,6 +60,8 @@ export interface PetServerOptions extends PetServerEvents {
   port?: number
   path?: string
   store?: PetSessionTracker
+  /** Extra paths handled by delegates on the same HTTP/WebSocket server (real mode only). */
+  delegates?: Record<string, (socket: WsLike, req?: unknown) => void>
   WebSocketServerImpl?: new (options: Record<string, unknown>) => WebSocketServerLike
   WebSocketServer?: new (options: Record<string, unknown>) => WebSocketServerLike
   logger?: {
@@ -158,8 +160,13 @@ export function createPetServer(options: PetServerOptions = {}): PetServer {
   const sockets = new Set<WsLike>()
   const listeners = new Set<() => void>()
   let server: WebSocketServerLike | null = null
+  let httpServer: { close(callback?: () => void): void; address(): unknown; destroy?(): void } | null = null
   let listening = false
   let starting: Promise<PetServer> | null = null
+
+  function usesInjectedServer(): boolean {
+    return options.WebSocketServerImpl !== undefined || options.WebSocketServer !== undefined
+  }
 
   function log(...args: unknown[]): void {
     if (logger && typeof logger.info === 'function') logger.info('[desktop-pet]', ...args)
@@ -401,33 +408,46 @@ export function createPetServer(options: PetServerOptions = {}): PetServer {
     return ws.WebSocketServer
   }
 
+  function pathnameOf(url: unknown): string {
+    if (typeof url !== 'string') return ''
+    try {
+      return new URL(url, 'http://localhost').pathname
+    } catch {
+      return ''
+    }
+  }
+
   function start(): Promise<PetServer> {
     if (starting !== null) return starting
     if (server !== null) return Promise.resolve(serverApi)
     starting = new Promise<PetServer>((resolve, reject) => {
       try {
         const WSS = resolveWebSocketServer()
-        const instance = new WSS({ host, port, path })
-        server = instance
-        instance.on('connection', (socket) => handleConnection(socket))
-        instance.on('listening', () => {
-          listening = true
-          log(`listening on ${host}:${port}${path}`)
-          starting = null
-          resolve(serverApi)
-        })
-        instance.on('error', (error) => {
-          log('server error', error)
-          if (!listening) {
-            server = null
-            starting = null
-            reject(error)
-          }
-        })
 
-        // Injected/fake servers used by unit tests often do not emit a real
-        // 'listening' event. Treat construction as ready in that mode.
-        if (options.WebSocketServerImpl !== undefined || options.WebSocketServer !== undefined) {
+        if (usesInjectedServer()) {
+          // Test doubles construct a server bound to a single path. Keep the
+          // original behavior so the existing suite continues to exercise the
+          // same code path.
+          const instance = new WSS({ host, port, path })
+          server = instance
+          instance.on('connection', (socket) => handleConnection(socket))
+          instance.on('listening', () => {
+            listening = true
+            log(`listening on ${host}:${port}${path}`)
+            starting = null
+            resolve(serverApi)
+          })
+          instance.on('error', (error) => {
+            log('server error', error)
+            if (!listening) {
+              server = null
+              starting = null
+              reject(error)
+            }
+          })
+
+          // Injected/fake servers used by unit tests often do not emit a real
+          // 'listening' event. Treat construction as ready in that mode.
           setImmediate(() => {
             if (!listening) {
               listening = true
@@ -435,7 +455,80 @@ export function createPetServer(options: PetServerOptions = {}): PetServer {
               resolve(serverApi)
             }
           })
+          return
         }
+
+        // Real mode: host one HTTP server and route both the public bridge
+        // path and app-internal delegate paths (e.g. /v1/ui) to the same WS
+        // server. This keeps the desktop pet's control plane private without
+        // opening a second port.
+        const http = require('node:http') as typeof import('node:http')
+        const httpInstance = http.createServer((_req, res) => {
+          res.statusCode = 404
+          res.end()
+        })
+        const instance = new WSS({ noServer: true })
+        server = instance
+        httpServer = httpInstance
+        const delegatePaths = new Set(Object.keys(options.delegates ?? {}))
+        instance.on('connection', (socket, req) => {
+          const pathname = pathnameOf((req as { url?: string } | undefined)?.url)
+          if (pathname === path) {
+            handleConnection(socket)
+            return
+          }
+          const delegate = options.delegates?.[pathname]
+          if (delegate !== undefined) {
+            delegate(socket, req)
+            return
+          }
+          try {
+            socket.close(1008, 'unknown path')
+          } catch {
+            // ignore
+          }
+        })
+        instance.on('error', (error) => {
+          log('server error', error)
+          if (!listening) {
+            server = null
+            httpServer = null
+            starting = null
+            reject(error)
+          }
+        })
+        httpInstance.on('upgrade', (req, socket, head) => {
+          const pathname = pathnameOf(req.url)
+          if (pathname === path || delegatePaths.has(pathname)) {
+            const raw = instance as unknown as {
+              handleUpgrade?(req: unknown, socket: unknown, head: unknown, cb: (socket: WsLike) => void): void
+            }
+            raw.handleUpgrade?.(req, socket, head, (ws) => {
+              ;(instance as unknown as { emit?: (event: string, ...args: unknown[]) => void }).emit?.('connection', ws, req)
+            })
+          } else {
+            try {
+              (socket as { destroy?: () => void }).destroy?.()
+            } catch {
+              // ignore
+            }
+          }
+        })
+        httpInstance.on('error', (error) => {
+          log('http server error', error)
+          if (!listening) {
+            server = null
+            httpServer = null
+            starting = null
+            reject(error)
+          }
+        })
+        httpInstance.listen(port, host, () => {
+          listening = true
+          log(`listening on ${host}:${port}${path}`)
+          starting = null
+          resolve(serverApi)
+        })
       } catch (error) {
         starting = null
         reject(error instanceof Error ? error : new Error(String(error)))
@@ -450,11 +543,14 @@ export function createPetServer(options: PetServerOptions = {}): PetServer {
         listening = false
         sockets.clear()
         connections.clear()
+        httpServer = null
         resolve()
         return
       }
       const current = server
+      const currentHttp = httpServer
       server = null
+      httpServer = null
       listening = false
       for (const socket of sockets) {
         try {
@@ -477,6 +573,15 @@ export function createPetServer(options: PetServerOptions = {}): PetServer {
         setImmediate(finish)
       } else {
         finish()
+      }
+      // In real mode the WebSocketServer is noServer-based and the HTTP server
+      // is owned by this module; close it so the port is released.
+      if (currentHttp !== null && typeof currentHttp.close === 'function') {
+        try {
+          currentHttp.close(() => {})
+        } catch {
+          // ignore shutdown errors
+        }
       }
     })
   }
@@ -511,6 +616,13 @@ export function createPetServer(options: PetServerOptions = {}): PetServer {
   }
 
   function address(): { port: number } | null {
+    if (httpServer !== null && typeof httpServer.address === 'function') {
+      const addr = httpServer.address() as { port?: number } | null
+      if (addr !== null && typeof addr === 'object' && typeof addr.port === 'number') {
+        return { port: addr.port }
+      }
+      return null
+    }
     if (server === null) return null
     const current = server as WebSocketServerLike & { address?: () => { port: number } | { address: string; port: number } | null }
     if (typeof current.address !== 'function') return null

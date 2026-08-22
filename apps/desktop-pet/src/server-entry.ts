@@ -8,13 +8,32 @@
  */
 
 import { createPetServer } from './server.js'
+import { createPetLibrary } from './pet-library.js'
+import { createSettingsStore } from './settings-store.js'
+import { createAppController } from './controller.js'
+import { createUiGateway, UI_PROTOCOL_PATH } from './ui-gateway.js'
 
-const server = createPetServer()
+const library = createPetLibrary()
+const store = createSettingsStore()
+
+let gateway: ReturnType<typeof createUiGateway>
+
+const server = createPetServer({
+  delegates: {
+    [UI_PROTOCOL_PATH]: (socket) => {
+      gateway.handleConnection(socket)
+    },
+  },
+})
+
+const controller = createAppController({ server, library, store })
+gateway = createUiGateway({ controller })
 
 server.start()
   .then(() => {
     const address = server.address()
     console.log(`[desktop-pet] WebSocket server listening on ws://${server.host}:${address?.port ?? server.port}${server.path}`)
+    console.log(`[desktop-pet] UI control channel on ws://${server.host}:${address?.port ?? server.port}${UI_PROTOCOL_PATH}`)
   })
   .catch((error) => {
     console.error('[desktop-pet] failed to start WebSocket server', error)
@@ -23,7 +42,11 @@ server.start()
 
 function shutdown(): void {
   console.log('[desktop-pet] shutting down')
-  void server.stop().then(() => process.exit(0))
+  void server.stop()
+    .then(() => {
+      gateway.stop()
+      process.exit(0)
+    })
 }
 
 process.on('SIGINT', shutdown)
