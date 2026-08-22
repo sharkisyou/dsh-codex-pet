@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://yshark.dev/schemas/pet-protocol/events.schema.json",
+  "title": "Pet Wire Protocol Envelope",
+  "description": "Common envelope fields carried by every desktop-pet wire protocol event. This scaffold will grow into the full public contract described in docs/adr/0002-pet-wire-protocol.md.",
+  "type": "object",
+  "properties": {
+    "agent": {
+      "type": "string",
+      "description": "Open string naming the source tool, e.g. \"dsh\", \"codex\", \"claude\"."
+    },
+    "sessionId": {
+      "type": "string",
+      "description": "Session id as scoped by the source tool; desktop pet keys sessions as agent:sessionId."
+    }
+  },
+  "required": ["agent", "sessionId"],
+  "additionalProperties": true
+}

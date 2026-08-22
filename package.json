@@ -1,0 +1,23 @@
+{
+  "name": "dsh-pet-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Monorepo for DSH desktop pet: Tauri desktop app, wire protocol, pure core logic, and DSH bridge plugin.",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "plugins/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "clean": "npm run clean --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
