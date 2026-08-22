@@ -177,3 +177,89 @@ body,
   cursor: pointer;
   align-self: flex-start;
 }
+
+/* Activity tray on the pet window */
+.activity-tray-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.activity-tray-toggle {
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(128, 128, 128, 0.45);
+  background: rgba(0, 0, 0, 0.35);
+  color: inherit;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.activity-tray-toggle:hover {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.activity-tray {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(320px, calc(100vw - 24px));
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  border-radius: 12px;
+  background: rgba(20, 20, 20, 0.94);
+  color: #eee;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  z-index: 10;
+}
+
+.activity-tray-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.activity-tray-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.activity-tray-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-tray-meta {
+  font-size: 0.72rem;
+  opacity: 0.75;
+}
+
+.activity-tray-item.unread::after {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: #4c9aff;
+}

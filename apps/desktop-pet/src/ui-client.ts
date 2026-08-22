@@ -8,19 +8,22 @@
 
 import { DEFAULT_PORT, PROTOCOL_VERSION } from '@yshark/pet-protocol'
 
-import type { AppStateSnapshot, ActivitySnapshot } from './controller.js'
+import type { AppStateSnapshot, ActivitySnapshot, TrayItemSnapshot } from './controller.js'
 import type { ParsedPet } from '@yshark/pet-core'
 
 export const UI_PATH = '/v1/ui'
 
 export interface UiClientHandlers {
   onState?(state: AppStateSnapshot): void
-  onStateSync?(payload: { settings: AppStateSnapshot['settings']; agents: string[]; activity: ActivitySnapshot }): void
+  onStateSync?(payload: { settings: AppStateSnapshot['settings']; agents: string[]; activity: ActivitySnapshot; activities?: TrayItemSnapshot[]; tray?: TrayItemSnapshot[]; allActivities?: TrayItemSnapshot[] }): void
   onSettings?(settings: AppStateSnapshot['settings']): void
   onPets?(pets: AppStateSnapshot['pets']): void
   onPet?(pet: { id: string; pet: ParsedPet; spriteDataUrl: string; atlasRows: number }): void
   onAgents?(agents: string[]): void
   onActivity?(activity: ActivitySnapshot): void
+  onActivities?(activities: TrayItemSnapshot[]): void
+  onTray?(tray: TrayItemSnapshot[]): void
+  onAllActivities?(activities: TrayItemSnapshot[]): void
   onError?(message: string): void
   onStatus?(connected: boolean): void
 }
@@ -42,6 +45,13 @@ export interface UiClient {
   updateSettings(patch: Record<string, unknown>): void
   reloadLibrary(): void
   requestPet(id: string): void
+  requestActivities(): void
+  markActivityRead(agent: string, sessionId: string): void
+  markRead(agent: string, sessionId: string): void
+  openSession(agent: string, sessionId: string, reason?: string): void
+  openActivity(agent: string, sessionId: string, reason?: string): void
+  openTrayItem(agent: string, sessionId: string, reason?: string): void
+  trayClick(agent: string, sessionId: string, reason?: string): void
 }
 
 function defaultUiUrl(port: number): string {
@@ -121,15 +131,24 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
 
   function handleMessage(message: Record<string, any>): void {
     switch (message.kind) {
-      case 'state':
-        handlers.onState?.(message.state as AppStateSnapshot)
+      case 'state': {
+        const state = message.state as AppStateSnapshot
+        handlers.onState?.(state)
+        handlers.onActivities?.(state.activities ?? [])
+        handlers.onTray?.(state.tray ?? state.activities ?? [])
         break
+      }
       case 'state-sync':
         handlers.onStateSync?.({
           settings: message.settings,
           agents: message.agents ?? [],
           activity: message.activity,
+          activities: message.activities ?? [],
+          tray: message.tray ?? message.activities ?? [],
+          allActivities: message.allActivities ?? message.activities ?? [],
         })
+        handlers.onActivities?.(message.activities ?? [])
+        handlers.onTray?.(message.tray ?? message.activities ?? [])
         break
       case 'settings':
         handlers.onSettings?.(message.settings)
@@ -150,6 +169,15 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
         break
       case 'activity':
         handlers.onActivity?.(message.activity)
+        break
+      case 'activities':
+        handlers.onActivities?.(message.activities ?? [])
+        break
+      case 'tray':
+        handlers.onTray?.(message.tray ?? [])
+        break
+      case 'allActivities':
+        handlers.onAllActivities?.(message.allActivities ?? [])
         break
       case 'error':
         handlers.onError?.(message.message ?? '未知错误')
@@ -185,6 +213,34 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
     send({ kind: 'pet/get', id })
   }
 
+  function requestActivities(): void {
+    send({ kind: 'activities/get' })
+  }
+
+  function markActivityRead(agent: string, sessionId: string): void {
+    send({ kind: 'activity/ack', agent, sessionId })
+  }
+
+  function markRead(agent: string, sessionId: string): void {
+    markActivityRead(agent, sessionId)
+  }
+
+  function openSession(agent: string, sessionId: string, reason?: string): void {
+    send({ kind: 'session/open', agent, sessionId, ...(reason ? { reason } : {}) })
+  }
+
+  function openActivity(agent: string, sessionId: string, reason?: string): void {
+    send({ kind: 'activity/open', agent, sessionId, ...(reason ? { reason } : {}) })
+  }
+
+  function openTrayItem(agent: string, sessionId: string, reason?: string): void {
+    send({ kind: 'tray/open', agent, sessionId, ...(reason ? { reason } : {}) })
+  }
+
+  function trayClick(agent: string, sessionId: string, reason?: string): void {
+    send({ kind: 'tray/click', agent, sessionId, ...(reason ? { reason } : {}) })
+  }
+
   function close(): void {
     closed = true
     if (reconnectTimer !== null) clearTimeout(reconnectTimer)
@@ -215,6 +271,13 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
     updateSettings,
     reloadLibrary,
     requestPet,
+    requestActivities,
+    markActivityRead,
+    markRead,
+    openSession,
+    openActivity,
+    openTrayItem,
+    trayClick,
   }
 }
 

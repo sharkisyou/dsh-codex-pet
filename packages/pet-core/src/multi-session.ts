@@ -216,7 +216,7 @@ export function mergeSession(options: MergeSessionOptions): MergedSession {
   }
 
   const active = state !== 'idle'
-  const reminder = !(isBlockingState(state) && acknowledged && !currentMatches(options.currentSession, sessionId, key))
+  const reminder = !((isBlockingState(state) || state === 'ready') && acknowledged && !currentMatches(options.currentSession, sessionId, key))
 
   return {
     agent,

@@ -25,11 +25,31 @@ export interface ActivitySnapshot {
   sessionId: string | null
 }
 
+export interface TrayItemSnapshot {
+  key: string
+  agent: string | null
+  sessionId: string
+  state: string
+  activityState: string
+  displayState: string
+  bubbleKey: string | null
+  bubbleParams: Record<string, unknown> | null
+  pendingKind: string | null
+  lastEventAt: number
+  acknowledged: boolean
+  active: boolean
+  reminder: boolean
+  title: string
+}
+
 export interface AppStateSnapshot {
   settings: PetSettings
   pets: PetLibraryEntry[]
   agents: string[]
   activity: ActivitySnapshot
+  activities?: TrayItemSnapshot[]
+  tray?: TrayItemSnapshot[]
+  allActivities?: TrayItemSnapshot[]
   libraryRoot: string
   marketUrl: string
   version: string
@@ -54,6 +74,16 @@ export interface AppController {
   updateSettings(patch: Partial<PetSettings>): Promise<{ ok: true; settings: PetSettings } | { ok: false; error: string }>
   stateSnapshot(): Promise<AppStateSnapshot>
   activitySnapshot(): ActivitySnapshot
+  activityList(): TrayItemSnapshot[]
+  trayActivities(): TrayItemSnapshot[]
+  activities(): TrayItemSnapshot[]
+  tray(): TrayItemSnapshot[]
+  allActivities(): TrayItemSnapshot[]
+  markActivityRead(agent: string, sessionId: string): boolean
+  markRead(agent: string, sessionId: string): boolean
+  openSession(agent: string, sessionId: string, reason?: string): boolean
+  handleTrayClick(agent: string, sessionId: string, reason?: string): { read: boolean; opened: boolean }
+  trayOpen(agent: string, sessionId: string, reason?: string): { read: boolean; opened: boolean }
   agents(): string[]
   subscribe(listener: () => void): () => void
   notify(): void
@@ -114,6 +144,64 @@ export function createAppController(options: AppControllerOptions): AppControlle
     }
   }
 
+  function toTrayItem(activity: SessionStoreActivity): TrayItemSnapshot {
+    return {
+      key: activity.key,
+      agent: activity.agent,
+      sessionId: activity.sessionId,
+      state: activity.state,
+      activityState: activity.activityState,
+      displayState: activity.activityState,
+      bubbleKey: activity.bubbleKey,
+      bubbleParams: activity.bubbleParams,
+      pendingKind: activity.pendingKind,
+      lastEventAt: activity.lastEventAt,
+      acknowledged: activity.acknowledged,
+      active: activity.active,
+      reminder: activity.reminder,
+      title: activity.title ?? activity.sessionId,
+    }
+  }
+
+  function activityList(): TrayItemSnapshot[] {
+    return server.activeActivities().map(toTrayItem)
+  }
+
+  function trayActivities(): TrayItemSnapshot[] {
+    return server.activeActivities()
+      .filter((activity) => activity.reminder)
+      .map(toTrayItem)
+  }
+
+  function allActivities(): TrayItemSnapshot[] {
+    return server.activeActivities().map(toTrayItem)
+  }
+
+  function markActivityRead(agent: string, sessionId: string): boolean {
+    if (typeof agent !== 'string' || agent === '' || typeof sessionId !== 'string' || sessionId === '') return false
+    server.store.markAcknowledged(agent, sessionId)
+    notify()
+    return true
+  }
+
+  function openSession(agent: string, sessionId: string, reason = 'tray'): boolean {
+    return server.openSession(agent, sessionId, reason)
+  }
+
+  function handleTrayClick(agent: string, sessionId: string, reason = 'tray'): { read: boolean; opened: boolean } {
+    const read = markActivityRead(agent, sessionId)
+    const opened = openSession(agent, sessionId, reason)
+    return { read, opened }
+  }
+
+  function markRead(agent: string, sessionId: string): boolean {
+    return markActivityRead(agent, sessionId)
+  }
+
+  function trayOpen(agent: string, sessionId: string, reason = 'tray'): { read: boolean; opened: boolean } {
+    return handleTrayClick(agent, sessionId, reason)
+  }
+
   async function listPets(): Promise<PetLibraryEntry[]> {
     if (petListCache !== null) return petListCache
     const result = await library.listPets()
@@ -163,11 +251,15 @@ export function createAppController(options: AppControllerOptions): AppControlle
       store.load(),
       listPets(),
     ])
+    const activities = activityList()
     return {
       settings,
       pets,
       agents: agentList(),
       activity: activitySnapshot(),
+      activities,
+      tray: trayActivities(),
+      allActivities: allActivities(),
       libraryRoot: library.root,
       marketUrl,
       version,
@@ -198,6 +290,16 @@ export function createAppController(options: AppControllerOptions): AppControlle
     updateSettings,
     stateSnapshot,
     activitySnapshot,
+    activityList,
+    trayActivities,
+    activities: activityList,
+    tray: trayActivities,
+    allActivities,
+    markActivityRead,
+    markRead,
+    openSession,
+    handleTrayClick,
+    trayOpen,
     agents: agentList,
     subscribe,
     notify,

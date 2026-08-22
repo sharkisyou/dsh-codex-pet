@@ -22,14 +22,25 @@ export type UiClientMessage =
   | { kind: 'library/reload' }
   | { kind: 'pet/get'; id: string }
   | { kind: 'activity/get' }
+  | { kind: 'activities/get' }
+  | { kind: 'activity/ack'; agent: string; sessionId: string }
+  | { kind: 'activity/open'; agent: string; sessionId: string; reason?: string }
+  | { kind: 'tray/ack'; agent: string; sessionId: string }
+  | { kind: 'tray/read'; agent: string; sessionId: string }
+  | { kind: 'session/open'; agent: string; sessionId: string; reason?: string }
+  | { kind: 'tray/open'; agent: string; sessionId: string; reason?: string }
+  | { kind: 'tray/click'; agent: string; sessionId: string; reason?: string }
 
 export type UiServerMessage =
   | { kind: 'state'; state: AppStateSnapshot }
-  | { kind: 'state-sync'; settings: AppStateSnapshot['settings']; agents: string[]; activity: AppStateSnapshot['activity'] }
+  | { kind: 'state-sync'; settings: AppStateSnapshot['settings']; agents: string[]; activity: AppStateSnapshot['activity']; activities: AppStateSnapshot['activities']; tray: AppStateSnapshot['tray']; allActivities: AppStateSnapshot['allActivities'] }
   | { kind: 'settings'; settings: AppStateSnapshot['settings'] }
   | { kind: 'pets'; pets: AppStateSnapshot['pets'] }
   | { kind: 'agents'; agents: string[] }
   | { kind: 'activity'; activity: AppStateSnapshot['activity'] }
+  | { kind: 'activities'; activities: AppStateSnapshot['activities'] }
+  | { kind: 'tray'; tray: AppStateSnapshot['tray'] }
+  | { kind: 'allActivities'; allActivities: AppStateSnapshot['allActivities'] }
   | { kind: 'pet'; id: string; pet: ParsedPet; spriteDataUrl: string; atlasRows: number }
   | { kind: 'error'; message: string }
 
@@ -164,6 +175,40 @@ export function createUiGateway(options: UiGatewayOptions): UiGateway {
       case 'activity/get':
         send(socket, { kind: 'activity', activity: controller.activitySnapshot() } satisfies UiServerMessage)
         return
+      case 'activities/get': {
+        const activities = controller.activityList()
+        const tray = controller.trayActivities()
+        send(socket, { kind: 'activities', activities } satisfies UiServerMessage)
+        send(socket, { kind: 'tray', tray } satisfies UiServerMessage)
+        send(socket, { kind: 'allActivities', allActivities: controller.allActivities() } satisfies UiServerMessage)
+        return
+      }
+      case 'activity/ack':
+      case 'tray/ack':
+      case 'tray/read': {
+        const agent = typeof message.agent === 'string' ? message.agent : ''
+        const sessionId = typeof message.sessionId === 'string' ? message.sessionId : ''
+        if (agent === '' || sessionId === '') {
+          send(socket, { kind: 'error', message: '缺少来源工具或会话 id' })
+          return
+        }
+        controller.markActivityRead(agent, sessionId)
+        return
+      }
+      case 'session/open':
+      case 'tray/open':
+      case 'activity/open':
+      case 'tray/click': {
+        const agent = typeof message.agent === 'string' ? message.agent : ''
+        const sessionId = typeof message.sessionId === 'string' ? message.sessionId : ''
+        const reason = typeof message.reason === 'string' && message.reason !== '' ? message.reason : 'tray'
+        if (agent === '' || sessionId === '') {
+          send(socket, { kind: 'error', message: '缺少来源工具或会话 id' })
+          return
+        }
+        controller.handleTrayClick(agent, sessionId, reason)
+        return
+      }
       default:
         // Unknown internal messages are ignored.
         return
@@ -196,11 +241,16 @@ export function createUiGateway(options: UiGatewayOptions): UiGateway {
   // activity changes without each socket adding duplicate listeners.
   const unsubscribe = controller.subscribe(() => {
     if (stopped) return
+    const activities = controller.activityList()
+    const tray = controller.trayActivities()
     broadcast({
       kind: 'state-sync',
       settings: controller.getSettings(),
       agents: controller.agents(),
       activity: controller.activitySnapshot(),
+      activities,
+      tray,
+      allActivities: controller.allActivities(),
     } satisfies UiServerMessage)
   })
 

@@ -100,6 +100,13 @@ export interface PetServer {
   handleEvent(data: unknown, socket: WsLike): void
   handleIncoming(data: unknown, socket: WsLike): void
   activeActivities(): SessionStoreActivity[]
+  activityList(): SessionStoreActivity[]
+  trayActivities(): SessionStoreActivity[]
+  activities(): SessionStoreActivity[]
+  tray(): SessionStoreActivity[]
+  allActivities(): SessionStoreActivity[]
+  markAcknowledged(agent: string, sessionId: string): boolean
+  markRead(agent: string, sessionId: string): boolean
   exportSnapshot(agent: string): unknown[]
   snapshotFor(agent: string): unknown[]
   currentActivity(): SessionStoreActivity | null
@@ -363,6 +370,39 @@ export function createPetServer(options: PetServerOptions = {}): PetServer {
     if (connections.size === 0) return []
     const agents = new Set(connections.keys())
     return store.activities().filter((activity) => activity.agent !== null && agents.has(activity.agent))
+  }
+
+  function activityList(): SessionStoreActivity[] {
+    return activeActivities()
+  }
+
+  function trayActivities(): SessionStoreActivity[] {
+    return activeActivities().filter((activity) => activity.reminder)
+  }
+
+  function activities(): SessionStoreActivity[] {
+    return activeActivities()
+  }
+
+  function tray(): SessionStoreActivity[] {
+    return trayActivities()
+  }
+
+  function allActivities(): SessionStoreActivity[] {
+    return activeActivities()
+  }
+
+  function markAcknowledged(agent: string, sessionId: string): boolean {
+    if (typeof agent === 'string' && agent !== '' && typeof sessionId === 'string' && sessionId !== '') {
+      store.markAcknowledged(agent, sessionId)
+      notify()
+      return true
+    }
+    return false
+  }
+
+  function markRead(agent: string, sessionId: string): boolean {
+    return markAcknowledged(agent, sessionId)
   }
 
   function snapshotFor(agent: string): unknown[] {
@@ -659,6 +699,13 @@ export function createPetServer(options: PetServerOptions = {}): PetServer {
     handleEvent,
     handleIncoming,
     activeActivities,
+    activityList,
+    trayActivities,
+    activities,
+    tray,
+    allActivities,
+    markAcknowledged,
+    markRead,
     exportSnapshot,
     snapshotFor,
     currentActivity,

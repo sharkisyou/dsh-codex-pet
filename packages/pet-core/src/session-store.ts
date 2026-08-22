@@ -200,7 +200,7 @@ export function createPetSessionStore(options: SessionStoreOptions = {}): PetSes
         lastEventAt: override.lastEventAt,
         acknowledged: currentAck,
         active,
-        reminder: !((state === 'failed' || state === 'blocked') && currentAck),
+        reminder: !((state === 'failed' || state === 'blocked' || (state as string) === 'ready') && currentAck),
         title: titles.get(key),
       }
     }
@@ -223,7 +223,7 @@ export function createPetSessionStore(options: SessionStoreOptions = {}): PetSes
       lastEventAt: lastEventAt.get(key) ?? 0,
       acknowledged: currentAck,
       active,
-      reminder: !((state === 'failed' || state === 'blocked') && currentAck),
+      reminder: !((state === 'failed' || state === 'blocked' || (state as string) === 'ready') && currentAck),
       title: titles.get(key),
     }
   }
