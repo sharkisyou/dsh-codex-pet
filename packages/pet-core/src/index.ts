@@ -1,49 +1,135 @@
 /**
- * Desktop Pet pure core — scaffold.
+ * Desktop Pet pure core.
  *
- * The full implementation will port the state-machine / pet-format /
- * multi-session / animation / image-dims logic from plugins/pet to TS.
- * This scaffold only provides the shared activity vocabulary and the
- * display-priority helper used by later tickets.
+ * This package contains the shared, side-effect-free logic used by the desktop
+ * pet application: pet-format parsing, per-session state machines,
+ * multi-session aggregation with (agent, sessionId) composite keys, animation
+ * frame selection, image dimension helpers, and misc utility functions.
  */
 
-export type PetActivityState =
-  | 'idle'
-  | 'running'
-  | 'waiting'
-  | 'blocked'
-  | 'ready'
+// Activity vocabulary and priority helpers.
+export {
+  ACTIVITY_PRIORITY,
+  STATE_PRIORITY,
+  TRAY_PRIORITY,
+  priorityOf,
+  selectDisplayState,
+  toActivityState,
+} from './activity.js'
+export type {
+  Agent,
+  PendingKind,
+  PetActivityState,
+  PetBubbleKey,
+  PetMachineState,
+  SessionId,
+  SessionKey,
+} from './types.js'
 
-export type PetBubbleKey =
-  | 'idle'
-  | 'awaitingReply'
-  | 'thinking'
-  | 'executingTool'
-  | 'waitingApproval'
-  | 'waitingAnswer'
-  | 'subagentWorking'
-  | 'failed'
-  | 'review'
+// Composite session identity.
+export {
+  createSessionKey,
+  parseSessionKey,
+  sessionKeyOf,
+  sessionRefOf,
+} from './session.js'
+export type { SessionRef } from './session.js'
 
-/** Multi-session display priority: needs input > blocked > ready > running > idle. */
-export const ACTIVITY_PRIORITY: Readonly<Record<PetActivityState, number>> = Object.freeze({
-  idle: 0,
-  running: 1,
-  ready: 2,
-  blocked: 3,
-  waiting: 4,
-})
+// Pet package parsing.
+export {
+  DEFAULT_FRAME_MS,
+  IMAGE_EXTS,
+  ROW_FRAME_COUNTS,
+  ROW_NAMES,
+  assessPackageDir,
+  parsePetJson,
+  stripBom,
+} from './pet-format.js'
+export type {
+  AssessPackageResult,
+  ParsePetJsonResult,
+  ParsedPet,
+  PetAnimationState,
+} from './pet-format.js'
 
-export function priorityOf(state: PetActivityState): number {
-  return ACTIVITY_PRIORITY[state]
-}
+// Per-session state machine.
+export {
+  REPLY_BUBBLE_MS,
+  createPetProtocolStateMachine,
+  createPetStateMachine,
+} from './state-machine.js'
+export type {
+  MachineState,
+  PetStateMachine,
+  PetStateMachineEvent,
+  PetStateMachineOptions,
+  PetStateMachineResult,
+  ProtocolMachineState,
+} from './state-machine.js'
 
-export function selectDisplayState(
-  states: readonly PetActivityState[],
-): PetActivityState {
-  let selected: PetActivityState = 'idle'
-  for (const state of states) {
-    if (priorityOf(state) > priorityOf(selected)) selected = state
-  }
-  return selected
-}
+// Multi-session aggregation.
+export {
+  buildAllActive,
+  buildTray,
+  entryIdOf,
+  isTopLevelSession,
+  mergeSession,
+  pickTop,
+  shouldAutoOpen,
+  statusKeyFor,
+} from './multi-session.js'
+export type {
+  BuildTrayOptions,
+  HostActivity,
+  LegacySessionState,
+  MergeSessionOptions,
+  MergedSession,
+  MultiSessionState,
+  SessionSummary,
+} from './multi-session.js'
+
+
+// Composite-key session store/tracker.
+export {
+  createMultiSessionTracker,
+  createPetSessionManager,
+  createPetSessionStore,
+  PetSessionTracker,
+} from './session-store.js'
+export type {
+  PetSessionTrackerConstructor,
+  SessionStoreActivity,
+  SessionStoreEvent,
+  SessionStoreOptions,
+} from './session-store.js'
+
+// Animation.
+export {
+  FALLBACK_FRAME_MS,
+  cycleNext,
+  frameIndex,
+  totalDuration,
+} from './animation.js'
+export type { AnimationDefinition, FrameResult } from './animation.js'
+
+// Image dimensions.
+export {
+  imageDims,
+  spriteMime,
+} from './image-dims.js'
+export type { ImageDimensions } from './image-dims.js'
+
+// Small utilities.
+export { bytesToBase64 } from './base64.js'
+export {
+  DEFAULT_REGISTRY,
+  DEFAULT_TIMEOUT_MS,
+  checkForUpdate,
+  compareVersions,
+  parseVersion,
+} from './update.js'
+export type {
+  CheckForUpdateOptions,
+  CheckForUpdateResult,
+  Version,
+} from './update.js'
