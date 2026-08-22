@@ -1,0 +1,228 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+
+import { apply, createBridge, BRIDGE_AGENT } from '../lib/index.mjs'
+
+class FakeWebSocket {
+  static instances = []
+  static sent = []
+  static reset() {
+    FakeWebSocket.instances = []
+    FakeWebSocket.sent = []
+  }
+  constructor(url) {
+    this.url = url
+    this.readyState = 0
+    this.sent = []
+    FakeWebSocket.instances.push(this)
+  }
+  send(text) {
+    const event = JSON.parse(text)
+    this.sent.push(event)
+    FakeWebSocket.sent.push(event)
+  }
+  open() {
+    if (this.readyState === 1) return
+    this.readyState = 1
+    this.onopen?.()
+  }
+  close() {
+    if (this.readyState === 3) return
+    this.readyState = 3
+    this.onclose?.()
+  }
+  serverMessage(event) {
+    this.onmessage?.({ data: JSON.stringify(event) })
+  }
+}
+
+function createHarness(options = {}) {
+  FakeWebSocket.reset()
+  const handlers = new Map()
+  const sessionsService = options.sessions ?? {
+    list: () => [],
+    get: () => undefined,
+  }
+  const agentsService = options.agents ?? {
+    get: () => undefined,
+  }
+  const ctx = {
+    WebSocket: FakeWebSocket,
+    logger: { info() {} },
+    on(event, fn) {
+      if (!handlers.has(event)) handlers.set(event, [])
+      handlers.get(event).push(fn)
+    },
+    effect(fn) {
+      return fn()
+    },
+    get(key) {
+      if (key === 'sessions') return sessionsService
+      if (key === 'agents') return agentsService
+      return undefined
+    },
+    sessions: sessionsService,
+    ...(options.openSession ? { openSession: options.openSession } : {}),
+  }
+  const bridge = apply(ctx, options.bridgeOptions ?? {})
+  const emit = async (event, ...args) => {
+    for (const handler of handlers.get(event) ?? []) {
+      await handler(...args)
+    }
+  }
+  return { ctx, bridge, handlers, emit, ws: () => FakeWebSocket.instances[0] }
+}
+
+test('bridge connects and performs a hello + snapshot handshake', () => {
+  const h = createHarness()
+  assert.equal(h.bridge.agent, BRIDGE_AGENT)
+  const ws = h.ws()
+  assert.ok(ws)
+  ws.open()
+
+  const types = FakeWebSocket.sent.map((event) => event.type)
+  assert.deepEqual(types, ['hello', 'snapshot', 'session/directory', 'session/sync'])
+  const hello = FakeWebSocket.sent[0]
+  assert.equal(hello.type, 'hello')
+  assert.equal(hello.agent, BRIDGE_AGENT)
+  assert.equal(hello.protocolVersion, 1)
+  assert.deepEqual(FakeWebSocket.sent[1], { type: 'snapshot', agent: BRIDGE_AGENT, sessions: [] })
+})
+
+test('DSH session activity is translated to wire protocol events', async () => {
+  const h = createHarness({ sessions: { list: () => [{ id: 's1', title: 'Task One' }], get: () => undefined } })
+  h.ws().open()
+
+  await h.emit('agent/status', { agent: { id: 's1' }, status: 'running' })
+  assert.deepEqual(FakeWebSocket.sent.at(-1), { type: 'session/status', agent: BRIDGE_AGENT, sessionId: 's1', status: 'running' })
+
+  await h.emit('agent/error', { agent: { id: 's1' }, message: 'boom', code: 7 })
+  assert.deepEqual(FakeWebSocket.sent.at(-1), {
+    type: 'session/error', agent: BRIDGE_AGENT, sessionId: 's1', message: 'boom', code: 7,
+  })
+
+  let resolveTool
+  const toolPromise = h.emit('tools/execute', { agent: { id: 's1' }, name: 'bash' }, () => new Promise((resolve) => { resolveTool = resolve }))
+  assert.deepEqual(FakeWebSocket.sent.at(-1), { type: 'tool/start', agent: BRIDGE_AGENT, sessionId: 's1', name: 'bash' })
+  resolveTool({ ok: true })
+  await toolPromise
+  assert.deepEqual(FakeWebSocket.sent.at(-1), { type: 'tool/end', agent: BRIDGE_AGENT, sessionId: 's1', name: 'bash' })
+})
+
+test('ask_user_question becomes an independent question lifecycle', async () => {
+  const h = createHarness()
+  h.ws().open()
+  let resolveQuestion
+  const questionPromise = h.emit('tools/execute', {
+    agent: { id: 's1' },
+    name: 'ask_user_question',
+    arguments: JSON.stringify({ prompt: 'Continue?' }),
+  }, () => new Promise((resolve) => { resolveQuestion = resolve }))
+
+  assert.deepEqual(FakeWebSocket.sent.at(-1), {
+    type: 'question/start', agent: BRIDGE_AGENT, sessionId: 's1', prompt: 'Continue?',
+  })
+  resolveQuestion('yes')
+  await questionPromise
+  assert.deepEqual(FakeWebSocket.sent.at(-1), {
+    type: 'question/end', agent: BRIDGE_AGENT, sessionId: 's1', answer: 'yes',
+  })
+})
+
+test('approval requests track concurrent counts and only end at zero', async () => {
+  const h = createHarness()
+  h.ws().open()
+
+  let resolveA
+  let resolveB
+  const a = h.emit('approval/request', { agent: { id: 's1' } }, () => new Promise((r) => { resolveA = r }))
+  const b = h.emit('approval/request', { agent: { id: 's1' } }, () => new Promise((r) => { resolveB = r }))
+
+  assert.deepEqual(FakeWebSocket.sent.at(-1), { type: 'approval/start', agent: BRIDGE_AGENT, sessionId: 's1', count: 2 })
+
+  resolveA('ok')
+  await a
+  assert.equal(FakeWebSocket.sent.at(-1).type, 'approval/start')
+  assert.equal(FakeWebSocket.sent.at(-1).count, 2)
+
+  resolveB('ok')
+  await b
+  const afterSecondEnd = FakeWebSocket.sent.at(-1)
+  assert.equal(afterSecondEnd.type, 'approval/end')
+  assert.equal(afterSecondEnd.count, 0)
+})
+
+test('subagent events are resolved to the parent session', async () => {
+  const sessions = new Map([
+    ['child1', { header: { parentSession: 's1' }, title: 'Child' }],
+  ])
+  const h = createHarness({ sessions: { list: () => [], get: (id) => sessions.get(id) } })
+  h.ws().open()
+
+  await h.emit('subagent/start', { id: 'child1', name: 'research' })
+  assert.deepEqual(FakeWebSocket.sent.at(-1), {
+    type: 'subagent/start', agent: BRIDGE_AGENT, sessionId: 's1', childSessionId: 'child1', name: 'research',
+  })
+
+  await h.emit('subagent/end', { id: 'child1', name: 'research' })
+  assert.deepEqual(FakeWebSocket.sent.at(-1), {
+    type: 'subagent/end', agent: BRIDGE_AGENT, sessionId: 's1', childSessionId: 'child1', name: 'research',
+  })
+})
+
+test('handshake snapshot includes sessions known from DSH and wire events', async () => {
+  const h = createHarness({ sessions: { list: () => [{ id: 's1', title: 'Hello' }, { id: 's2', title: 'World' }], get: () => undefined }, bridgeOptions: { reconnectDelay: 5 } })
+  const ws = h.ws()
+  ws.open()
+  await h.emit('agent/status', { agent: { id: 's2' }, status: 'running' })
+
+  // Force another handshake to read the current snapshot from the bridge.
+  ws.close()
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  const second = FakeWebSocket.instances[1]
+  assert.ok(second, 'should reconnect with a new socket')
+  second.open()
+
+  const snapshot = FakeWebSocket.sent.filter((event) => event.type === 'snapshot').at(-1)
+  assert.ok(snapshot)
+  const ids = snapshot.sessions.map((entry) => entry.sessionId).sort()
+  assert.deepEqual(ids, ['s1', 's2'])
+})
+
+test('incoming session/open is forwarded to a host opener when available', async () => {
+  const opened = []
+  const h = createHarness({ openSession: (sessionId, reason) => { opened.push({ sessionId, reason }) } })
+  const ws = h.ws()
+  ws.open()
+  ws.serverMessage({ type: 'session/open', agent: BRIDGE_AGENT, sessionId: 's1', reason: 'tray' })
+  assert.deepEqual(opened, [{ sessionId: 's1', reason: 'tray' }])
+})
+
+test('createBridge exposes a send/stop surface and validates outgoing events', () => {
+  FakeWebSocket.reset()
+  const bridge = createBridge({ logger: { info() {} }, WebSocket: FakeWebSocket }, { reconnectDelay: 5 })
+  bridge.start()
+  const ws = FakeWebSocket.instances[0]
+  ws.open()
+  assert.equal(bridge.send({ type: 'session/status', agent: 'dsh', sessionId: 's1', status: 'running' }), true)
+  assert.equal(FakeWebSocket.sent.at(-1).type, 'session/status')
+  assert.equal(bridge.send({ type: 'not-real', agent: 'dsh', sessionId: 's1' }), false)
+  bridge.stop()
+})
+
+test('session/sync reflects removed sessions when the live DSH list changes', async () => {
+  const live = [{ id: 's1', title: 'One' }, { id: 's2', title: 'Two' }]
+  const h = createHarness({
+    sessions: { list: () => live.slice(), get: () => undefined },
+    bridgeOptions: { reconnectDelay: 5 },
+  })
+  h.ws().open()
+  await h.emit('agent/status', { agent: { id: 's1' }, status: 'running' })
+
+  live.length = 0
+  live.push({ id: 's1', title: 'One' })
+  await h.emit('session/disposed', { id: 's2' })
+
+  const sync = FakeWebSocket.sent.filter((event) => event.type === 'session/sync').at(-1)
+  assert.deepEqual(sync.sessionIds, ['s1'])
+})

@@ -1,7 +1,5 @@
-# @yshark/dsh-codex-pet 单插件 bundle 补丁：安装为 profile bundle 时插入宿主行。
-# 该行同时是 dsh.client 扫描的花名册来源（客户端 bundle 经
-# window.__DSH_BOOT__ 注入，由 /plugins/@yshark/dsh-codex-pet/client.js 提供）。
+# @yshark/dsh-codex-pet 桥接插件 bundle 补丁：安装为 profile bundle 时插入宿主行。
+# 桥接插件只监听 DSH 会话事件并推送 WebSocket 线协议，不依赖 HTTP 路由。
 - insert:
     - id: pet
       name: '@yshark/dsh-codex-pet'
-      inject: [webServer]

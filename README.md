@@ -1,6 +1,6 @@
 # dsh-pet-plugin
 
-DeepSeek Harness 宠物插件仓库，现迁移为**桌宠（Desktop Pet）双部件系统**的单仓库多包 npm workspace。
+DeepSeek Harness 宠物插件仓库，实现**桌宠（Desktop Pet）双部件系统**的单仓库多包 npm workspace。
 
 ## 仓库结构
 
@@ -26,15 +26,14 @@ npm test            # 跑所有 workspace 测试
 npm run typecheck   # 所有 TypeScript workspace 类型检查
 ```
 
-### 桥接插件（现有 DSH 插件）
+### 桥接插件（DSH → 桌宠）
 
 ```sh
 cd plugins/pet
-npm test        # 运行测试并重新生成客户端 bundle
-npm run build   # 仅重新生成客户端 bundle
+npm test        # 运行桥接翻译与重连测试
 ```
 
-详细文档见 [plugins/pet/README.md](plugins/pet/README.md)。
+不再构建浏览器客户端 bundle；插件只包含宿主侧 WebSocket 客户端。
 
 ### 桌宠（apps/desktop-pet）
 

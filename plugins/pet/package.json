@@ -1,58 +1,43 @@
 {
   "name": "@yshark/dsh-codex-pet",
   "version": "0.1.2",
-  "description": "DSH 宠物插件：状态驱动悬浮宠物（Codex 宠物包兼容）",
+  "description": "DSH 桥接插件：把会话活动翻译成桌宠线协议并推送（WebSocket 客户端 + 自动重连）",
   "license": "MIT",
   "keywords": [
     "deepseek",
     "dsh",
     "dsh-plugin",
     "pet",
-    "floating-pet",
-    "web-ui",
-    "cordis"
+    "bridge",
+    "desktop-pet",
+    "websocket"
   ],
+  "type": "module",
   "main": "lib/index.mjs",
   "exports": {
     ".": "./lib/index.mjs",
-    "./client": "./lib/client.js",
     "./package.json": "./package.json"
   },
   "files": [
     "lib/index.mjs",
-    "lib/client.js",
     "cordis.patch.yml",
-    "PUBLISHING.md",
-    "src/i18n.js",
-    "src/pet-format.js",
-    "src/state-machine.js",
-    "src/image-dims.js",
-    "src/update.js"
+    "README.md",
+    "PUBLISHING.md"
   ],
   "scripts": {
-    "build": "node scripts/build-client.mjs",
-    "debug": "node --inspect-brk=9229 scripts/debug-host.mjs",
-    "pretest": "node scripts/build-client.mjs",
     "test": "node --test",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm test"
   },
-  "publishConfig": {
-    "access": "public"
+  "dependencies": {
+    "@yshark/pet-protocol": "0.1.0",
+    "ws": "^8.21.3"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "platform": "web",
-      "inject": [
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-locale"
-      ],
-      "immediately": true
     }
   },
-  "peerDependencies": {
-    "react": "^18.2.0"
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -1,983 +1,773 @@
 import { createRequire } from 'node:module'
-import { createReadStream } from 'node:fs'
-import { copyFile, mkdir, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+
+import {
+  DEFAULT_PORT,
+  DEFAULT_WS_URL,
+  PROTOCOL_VERSION,
+  createSessionKey,
+  validatePetEvent,
+} from '@yshark/pet-protocol'
 
 const require = createRequire(import.meta.url)
-const {
-  parsePetJson,
-  assessPackageDir,
-  stripBom,
-} = require('../src/pet-format.js')
-const { createPetStateMachine } = require('../src/state-machine.js')
-const { imageDims, spriteMime } = require('../src/image-dims.js')
-const { checkForUpdate } = require('../src/update.js')
-
-// ===== 常量 =====
-
-const CELL_W = 192
-const CELL_H = 208
-const SPRITE_MAX = 25 * 1024 * 1024
-const RPC_BODY_MAX = 2 * 1024 * 1024
-const RPC_PREFIX = '/pet/rpc/'
 
 export const name = 'pet'
-export const inject = ['webServer']
+export const inject = []
 
-// ===== 路径 / 输入安全 =====
+export const BRIDGE_AGENT = 'dsh'
+export const DEFAULT_RECONNECT_MS = 1000
+export const MAX_RECONNECT_MS = 30000
 
-function normalizePath(value) {
-  return String(value).replace(/\\/g, '/').replace(/\/+$/, '')
+function safeString(value, fallback = '') {
+  if (typeof value === 'string' && value !== '') return value
+  return fallback
 }
 
-function joinPath(base, ...parts) {
-  return [normalizePath(base), ...parts.map((part) => String(part))].join('/')
-}
-
-function safeLibraryId(value) {
-  if (typeof value !== 'string' || value === '') return null
-  if (value === '.' || value === '..') return null
-  if (/[/\\]/.test(value)) return null
-  return value
-}
-
-function safeSpriteName(value) {
-  if (typeof value !== 'string' || value === '') return null
-  if (value === '.' || value === '..') return null
-  if (/[/\\]/.test(value)) return null
-  return value
-}
-
-function errorText(error) {
-  return error instanceof Error ? error.message : String(error)
-}
-
-async function pathExists(path) {
-  try {
-    await stat(path)
-    return true
-  } catch {
-    return false
+function sessionIdOf(value) {
+  if (typeof value === 'string' && value !== '') return value
+  if (value === null || typeof value !== 'object') return null
+  for (const key of ['sessionId', 'id', 'key']) {
+    const v = value[key]
+    if (typeof v === 'string' && v !== '') return v
   }
+  return null
 }
 
-async function readText(path) {
-  return stripBom(await readFile(path, 'utf8'))
-}
-
-async function readJson(path) {
-  return JSON.parse(await readText(path))
-}
-
-// 只读图集头部即可拿到尺寸（PNG/WebP 宽高都在文件头 ~30 字节内），
-// 避免为校验把整张图集（最大 25MB）读进内存。
-async function readSpriteHeader(path) {
-  const handle = await open(path, 'r')
-  try {
-    const buf = Buffer.alloc(64)
-    const { bytesRead } = await handle.read(buf, 0, buf.length, 0)
-    return buf.subarray(0, bytesRead)
-  } finally {
-    await handle.close()
+function childIdOf(value) {
+  if (value !== null && typeof value === 'object' && typeof value.childSessionId === 'string' && value.childSessionId !== '') {
+    return value.childSessionId
   }
+  return sessionIdOf(value)
 }
 
-async function writeJson(path, value) {
-  await writeFile(path, JSON.stringify(value), 'utf8')
-}
-
-// ===== 事件 → 状态机（当前会话过滤）=====
-
-function agentIdOf(agent) {
-  if (agent === null || typeof agent !== 'object') return null
-  if (typeof agent.id === 'string') return agent.id
-  if (typeof agent.sessionId === 'string') return agent.sessionId
+function parentIdOfValue(value) {
+  if (typeof value === 'string' && value !== '') return value
+  if (value !== null && typeof value === 'object') return sessionIdOf(value)
   return null
 }
 
-function relevantToCurrent(agent, currentSession) {
-  // 无法确定当前会话时跟随一切活动，避免头部入口不可见的页面永远显示空闲。
-  if (currentSession === null) return true
-  const id = agentIdOf(agent)
-  if (id === null) return true
-  return id === currentSession
-}
-
-function childIdOf(info) {
-  if (info === null || typeof info !== 'object') return null
-  if (typeof info.id === 'string') return info.id
-  if (typeof info.sessionId === 'string') return info.sessionId
+function sessionIdOfEntry(entry) {
+  if (entry === null || typeof entry !== 'object') return null
+  if (typeof entry.id === 'string' && entry.id !== '') return entry.id
+  if (typeof entry.sessionId === 'string' && entry.sessionId !== '') return entry.sessionId
+  const header = entry.header ?? (typeof entry.session === 'object' && entry.session !== null ? entry.session.header : null)
+  if (header && typeof header.id === 'string' && header.id !== '') return header.id
+  if (header && typeof header.sessionId === 'string' && header.sessionId !== '') return header.sessionId
   return null
 }
 
-function parentIdOfChildSession(ctx, childId) {
-  const sessions = ctx.get('sessions')
-  if (sessions !== undefined && typeof sessions.get === 'function') {
-    const session = sessions.get(childId)
-    const parent = session !== null && typeof session === 'object' && session.header !== null &&
-      typeof session.header === 'object' ? session.header.parentSession : undefined
-    if (typeof parent === 'string') return parent
+function titleOfEntry(entry) {
+  if (entry === null || typeof entry !== 'object') return null
+  for (const key of ['title', 'displayTitle', 'name']) {
+    const v = entry[key]
+    if (typeof v === 'string' && v !== '') return v
   }
-  const agents = ctx.get('agents')
-  if (agents !== undefined && typeof agents.get === 'function') {
-    const agent = agents.get(childId)
-    const session = agent !== null && typeof agent === 'object' ? agent.session : undefined
-    const parent = session !== null && typeof session === 'object' && session.header !== null &&
-      typeof session.header === 'object' ? session.header.parentSession : undefined
-    if (typeof parent === 'string') return parent
+  for (const container of [entry.summary, entry.meta]) {
+    if (container !== null && typeof container === 'object') {
+      for (const key of ['title', 'displayTitle', 'name']) {
+        const v = container[key]
+        if (typeof v === 'string' && v !== '') return v
+      }
+    }
+  }
+  const header = entry.header ?? (typeof entry.session === 'object' && entry.session !== null ? entry.session.header : null)
+  if (header !== null && typeof header === 'object') {
+    for (const key of ['title', 'displayTitle', 'name']) {
+      const v = header[key]
+      if (typeof v === 'string' && v !== '') return v
+    }
+    const meta = header.meta
+    if (meta !== null && typeof meta === 'object') {
+      for (const inner of ['title', 'displayTitle', 'name']) {
+        const v = meta[inner]
+        if (typeof v === 'string' && v !== '') return v
+      }
+    }
   }
   return null
+}
+
+function isChildSession(entry) {
+  if (entry === null || typeof entry !== 'object') return false
+  if (entry.origin === 'subagent' || entry.parentId || entry.parentSession || entry.parentSessionId) return true
+  const summary = entry.summary
+  if (summary !== null && typeof summary === 'object' && (summary.origin === 'subagent' || summary.parentId || summary.parentSession || summary.parentSessionId)) return true
+  const header = entry.header ?? (typeof entry.session === 'object' && entry.session !== null ? entry.session.header : null)
+  if (header !== null && typeof header === 'object') {
+    if (header.parentSession || header.parentId || header.parentSessionId || header.parent) return true
+    const meta = header.meta
+    if (meta !== null && typeof meta === 'object' && (meta.parentSession || meta.parentId || meta.parent)) return true
+  }
+  return false
 }
 
 function toolNameOf(exec) {
-  if (exec === null || typeof exec !== 'object') return '工具'
+  if (exec === null || typeof exec !== 'object') return 'tool'
   if (typeof exec.name === 'string' && exec.name !== '') return exec.name
-  if (exec.tool !== null && typeof exec.tool === 'object' && typeof exec.tool.name === 'string') {
+  if (exec.tool !== null && typeof exec.tool === 'object' && typeof exec.tool.name === 'string' && exec.tool.name !== '') {
     return exec.tool.name
   }
-  return '工具'
+  return 'tool'
 }
 
-// ===== 主目录发现 =====
-
-function userHomeFromEnv() {
-  for (const key of ['USERPROFILE', 'HOME']) {
-    const value = process.env[key]
-    if (typeof value === 'string' && value.trim() !== '') return normalizePath(value.trim())
+function subagentNameOf(info) {
+  if (info === null || typeof info !== 'object') return undefined
+  if (typeof info.name === 'string' && info.name !== '') return info.name
+  if (typeof info.toolName === 'string' && info.toolName !== '') return info.toolName
+  if (info.tool !== null && typeof info.tool === 'object' && typeof info.tool.name === 'string' && info.tool.name !== '') {
+    return info.tool.name
   }
-  return null
+  return undefined
 }
 
-function explicitHarnessHome() {
-  const value = process.env.DSH_HOME
-  if (typeof value !== 'string' || value.trim() === '') return null
-  let text = value.trim()
-  const userHome = userHomeFromEnv()
-  if (text === '~') {
-    if (userHome === null) return null
-    return userHome
+function promptOf(exec) {
+  if (exec === null || typeof exec !== 'object') return undefined
+  const candidateKeys = ['prompt', 'question', 'message', 'text', 'input']
+  for (const key of candidateKeys) {
+    const v = exec[key]
+    if (typeof v === 'string' && v !== '') return v
   }
-  if (text.startsWith('~/') || text.startsWith('~\\')) {
-    if (userHome === null) return null
-    return joinPath(userHome, text.slice(2).replace(/\\/g, '/'))
-  }
-  return normalizePath(text)
-}
-
-async function findDefaultHarnessHome(userHome) {
-  if (userHome !== null) return { libraryRoot: joinPath(userHome, '.dsh'), codexRoot: joinPath(userHome, '.codex', 'pets') }
-  if (process.platform === 'win32') {
+  if (typeof exec.arguments === 'string' && exec.arguments !== '') {
     try {
-      const entries = await readdir('C:\\Users', { withFileTypes: true })
-      for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith('.')) continue
-        const candidate = `C:/Users/${entry.name}`
-        if (await pathExists(joinPath(candidate, '.dsh'))) {
-          return { libraryRoot: joinPath(candidate, '.dsh'), codexRoot: joinPath(candidate, '.codex', 'pets') }
+      const parsed = JSON.parse(exec.arguments)
+      if (parsed !== null && typeof parsed === 'object') {
+        for (const key of candidateKeys) {
+          const v = parsed[key]
+          if (typeof v === 'string' && v !== '') return v
         }
       }
     } catch {
-      // Windows 部署若为受限用户，继续走 sessionPersistence 反推。
+      if (exec.arguments.length <= 4096) return exec.arguments
     }
   }
-  return null
+  if (exec.arguments !== null && typeof exec.arguments === 'object') {
+    for (const key of candidateKeys) {
+      const v = exec.arguments[key]
+      if (typeof v === 'string' && v !== '') return v
+    }
+  }
+  return undefined
 }
 
-async function findHomeFromSessionPersistence(ctx) {
-  const sp = ctx.get('sessionPersistence')
-  if (sp === undefined) return null
-  let metas
-  try {
-    metas = await sp.list()
-  } catch {
-    return null
+function answerOf(result) {
+  if (typeof result === 'string' && result !== '') return result
+  if (result === null || typeof result !== 'object') return undefined
+  for (const key of ['answer', 'response', 'text', 'message', 'value']) {
+    const v = result[key]
+    if (typeof v === 'string' && v !== '') return v
   }
-  if (!Array.isArray(metas)) return null
-  for (const meta of metas) {
-    let loc
+  return undefined
+}
+
+function getSessionsService(ctx) {
+  if (ctx && typeof ctx.get === 'function') {
     try {
-      loc = sp.locate(meta)
+      const value = ctx.get('sessions')
+      if (value !== undefined) return value
     } catch {
-      continue
+      // fall through to ctx.sessions
     }
-    let text = null
-    if (typeof loc === 'string') text = loc
-    else if (loc !== null && typeof loc === 'object') {
-      text = typeof loc.path === 'string' ? loc.path
-        : typeof loc.file === 'string' ? loc.file
-        : typeof loc.uri === 'string' ? loc.uri
-        : null
+  }
+  return ctx && typeof ctx === 'object' ? ctx.sessions : undefined
+}
+
+function listSessions(ctx) {
+  const service = getSessionsService(ctx)
+  if (service && typeof service.list === 'function') {
+    try {
+      const result = service.list()
+      return Array.isArray(result) ? result : []
+    } catch {
+      return []
     }
-    if (text === null) continue
-    const normalized = normalizePath(text)
-    const idx = normalized.indexOf('/.dsh/')
-    if (idx >= 0) return normalized.slice(0, idx) + '/.dsh'
-    if (normalized.endsWith('/.dsh')) return normalized
+  }
+  return []
+}
+
+function parentSessionIdOf(ctx, childId, info) {
+  if (childId === null) return null
+  if (info !== null && typeof info === 'object') {
+    for (const key of ['parentSessionId', 'parentId', 'parentSession', 'parent', 'owner']) {
+      const v = info[key]
+      if (typeof v === 'string' && v !== '') return v
+      if (v !== null && typeof v === 'object') {
+        const nested = sessionIdOf(v)
+        if (nested !== null) return nested
+      }
+    }
+    if (info.session !== null && typeof info.session === 'object' && info.session.header !== null && typeof info.session.header === 'object') {
+      const v = info.session.header.parentSession ?? info.session.header.parentId ?? info.session.header.parentSessionId
+      if (typeof v === 'string' && v !== '') return v
+    }
+  }
+
+  const service = getSessionsService(ctx)
+  if (service && typeof service.get === 'function') {
+    try {
+      const session = service.get(childId)
+      const header = session !== null && typeof session === 'object' ? session.header : null
+      if (header !== null && typeof header === 'object') {
+        const v = header.parentSession ?? header.parentId ?? header.parentSessionId ?? header.parent
+        const parent = parentIdOfValue(v)
+        if (parent !== null) return parent
+      }
+      if (session !== null && typeof session === 'object') {
+        const v = session.parentSession ?? session.parentId ?? session.parentSessionId ?? session.parent
+        const parent = parentIdOfValue(v)
+        if (parent !== null) return parent
+      }
+    } catch {
+      // try agents below
+    }
+  }
+
+  let agents = undefined
+  if (ctx && typeof ctx.get === 'function') {
+    try { agents = ctx.get('agents') } catch { agents = undefined }
+  }
+  if (agents && typeof agents.get === 'function') {
+    try {
+      const agent = agents.get(childId)
+      const session = agent !== null && typeof agent === 'object' ? agent.session : null
+      const header = session !== null && typeof session === 'object' ? session.header : null
+      if (header !== null && typeof header === 'object') {
+        const v = header.parentSession ?? header.parentId ?? header.parentSessionId ?? header.parent
+        const parent = parentIdOfValue(v)
+        if (parent !== null) return parent
+      }
+      if (session !== null && typeof session === 'object') {
+        const v = session.parentSession ?? session.parentId ?? session.parentSessionId ?? session.parent
+        const parent = parentIdOfValue(v)
+        if (parent !== null) return parent
+      }
+    } catch {
+      // no parent available
+    }
+  }
+
+  for (const entry of listSessions(ctx)) {
+    if (sessionIdOfEntry(entry) === childId) {
+      const v = (entry.parentSession ?? entry.parentId ?? entry.parentSessionId ?? entry.parent)
+        ?? (entry.header && (entry.header.parentSession ?? entry.header.parentId ?? entry.header.parentSessionId ?? entry.header.parent))
+      const parent = parentIdOfValue(v)
+      if (parent !== null) return parent
+    }
   }
   return null
 }
 
-async function findHome(ctx) {
-  const reasons = []
-  const userHome = userHomeFromEnv()
-  const explicit = explicitHarnessHome()
-  if (explicit !== null) {
-    return { libraryRoot: explicit, codexRoot: userHome === null ? null : joinPath(userHome, '.codex', 'pets') }
+export function createBridge(ctx, options = {}) {
+  const logger = ctx?.logger ?? console
+  const agent = safeString(options.agent, process.env.DSH_PET_AGENT || BRIDGE_AGENT)
+  const url = safeString(options.url, process.env.DSH_PET_URL || DEFAULT_WS_URL)
+  const reconnectDelay = Number(options.reconnectDelay ?? process.env.DSH_PET_RECONNECT_MS ?? DEFAULT_RECONNECT_MS)
+  const maxReconnectDelay = Number(options.maxReconnectDelay ?? MAX_RECONNECT_MS)
+  const log = (msg, ...args) => {
+    if (logger && typeof logger.info === 'function') logger.info(`[pet-bridge] ${msg}`, ...args)
   }
 
-  const fromDefault = await findDefaultHarnessHome(userHome)
-  if (fromDefault !== null) return fromDefault
-  reasons.push(`env: 无 USERPROFILE/HOME (${process.platform})`)
-
-  const fromSessions = await findHomeFromSessionPersistence(ctx)
-  if (fromSessions !== null) {
-    return { libraryRoot: fromSessions, codexRoot: userHome === null ? null : joinPath(userHome, '.codex', 'pets') }
-  }
-  reasons.push('sessions: 无法从 sessionPersistence 位置反推')
-
-  return { error: reasons.join(' | ') }
-}
-
-// ===== RPC HTTP 载体 =====
-
-function sendJson(res, status, payload) {
-  const body = JSON.stringify(payload)
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-  })
-  res.end(body)
-}
-
-async function readJsonBody(req, maxBytes) {
-  const declared = Number(req.headers['content-length'])
-  if (Number.isFinite(declared) && declared > maxBytes) {
-    const error = new Error('请求体过大')
-    error.statusCode = 413
-    throw error
-  }
-  const chunks = []
-  let received = 0
-  for await (const chunk of req) {
-    received += chunk.length
-    if (received > maxBytes) {
-      const error = new Error('请求体过大')
-      error.statusCode = 413
-      throw error
+  let WebSocketImpl = options.WebSocket || ctx?.WebSocket || globalThis.WebSocket
+  if (!WebSocketImpl) {
+    try {
+      WebSocketImpl = require('ws')
+    } catch {
+      WebSocketImpl = null
     }
-    chunks.push(chunk)
-  }
-  if (received === 0) return {}
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'))
-  } catch (error) {
-    const wrapped = new Error('请求体不是合法 JSON')
-    wrapped.statusCode = 400
-    wrapped.cause = error
-    throw wrapped
-  }
-}
-
-function rpcMethodOf(pathname) {
-  if (typeof pathname !== 'string' || !pathname.startsWith(RPC_PREFIX)) return null
-  const raw = pathname.slice(RPC_PREFIX.length)
-  if (raw === '' || raw.includes('/')) return null
-  try {
-    return decodeURIComponent(raw)
-  } catch {
-    return null
-  }
-}
-
-// ===== 插件主体 =====
-
-export function apply(ctx) {
-  const spriteCache = new Map()
-  const eventCounters = { status: 0, tools: 0, approvals: 0, subagents: 0, subagentEvents: 0, errors: 0, lastSubagent: null }
-
-  let libraryRoot = null
-  let libraryDir = null
-  let sourceDir = null
-  let currentSession = null
-  let initPromise = null
-  const now = () => Date.now()
-  const trace = (msg, data) => {
-    const detail = data === undefined ? '' : ' ' + JSON.stringify(data)
-    ctx.logger?.info?.(`[pet] ${msg}${detail}`)
   }
 
-  const petDir = (id) => joinPath(libraryDir, id)
-  const stateFile = () => joinPath(libraryRoot, 'pet-state.json')
+  let socket = null
+  let started = false
+  let stopped = false
+  let connected = false
+  let retryTimer = null
+  let retryAttempt = 0
 
-  // 每个顶层会话一个状态机；多会话时按 sessionId 路由，不再只跟随 currentSession。
-  const machines = new Map()
-  const knownSessions = new Set()
-  const trackedSubagents = new Map() // childSessionId -> 父会话 id
-  const lastEventAt = new Map() // sessionId -> 最近真实事件时间
-  const pendingKinds = new Map() // sessionId -> 'approval' | 'question'
-  const approvalCounts = new Map() // sessionId -> 并发审批数
-  const acknowledged = new Set() // 已确认的 Blocked 会话
+  const knownSessions = new Map()
+  const childParent = new Map()
+  const liveIds = new Set()
 
-  const machineFor = (sessionKey) => {
-    let machine = machines.get(sessionKey)
-    if (machine === undefined) {
-      machine = createPetStateMachine()
-      machines.set(sessionKey, machine)
-    }
-    return machine
-  }
-  const isKnownSession = (sid) => sid !== null && typeof sid === 'string' &&
-    (knownSessions.has(sid) || sid === currentSession ||
-      // 客户端尚未同步任何会话/尚未识别当前会话时，先跟随所有带 id 的事件，避免宠物一直空闲。
-      (currentSession === null && knownSessions.size === 0))
-  const clearAck = (sid) => { acknowledged.delete(sid) }
-  const touch = (sid) => { lastEventAt.set(sid, now()) }
-  const knownMachine = (sid) => {
-    if (!isKnownSession(sid)) return null
-    touch(sid)
-    return machineFor(sid)
-  }
-
-  ctx.on('agent/status', (payload) => {
-    if (payload === null || typeof payload !== 'object') return
-    const sid = agentIdOf(payload.agent)
-    if (sid === null || !isKnownSession(sid)) return
-    const machine = knownMachine(sid)
-    if (machine === null) return
-    const before = machine.apply({ kind: 'tick', ts: now() })
-    eventCounters.status++
-    clearAck(sid)
-    machine.apply({ kind: 'agent-status', status: payload.status === 'running' ? 'running' : 'idle', ts: now() })
-    const after = machine.apply({ kind: 'tick', ts: now() })
-    trace('agent/status', { sid, status: payload.status, before, after })
-  })
-
-  ctx.on('agent/error', (payload) => {
-    if (payload === null || typeof payload !== 'object') return
-    const sid = agentIdOf(payload.agent)
-    if (sid === null || !isKnownSession(sid)) return
-    const machine = knownMachine(sid)
-    if (machine === null) return
-    const before = machine.apply({ kind: 'tick', ts: now() })
-    eventCounters.errors++
-    clearAck(sid)
-    machine.apply({ kind: 'error', ts: now() })
-    if (sid === currentSession) acknowledged.add(sid)
-    const after = machine.apply({ kind: 'tick', ts: now() })
-    trace('agent/error', { sid, before, after })
-  })
-
-  ctx.on('tools/execute', (exec, next) => {
-    const agent = exec !== null && typeof exec === 'object' ? exec.agent : undefined
-    const sid = agentIdOf(agent)
-    if (sid === null || !isKnownSession(sid)) return next()
-    const machine = knownMachine(sid)
-    if (machine === null) return next()
-    eventCounters.tools++
-    clearAck(sid)
-    const name = toolNameOf(exec)
-    const isQuestion = name === 'ask_user_question'
-    if (isQuestion) pendingKinds.set(sid, 'question')
-    const before = machine.apply({ kind: 'tick', ts: now() })
-    machine.apply({ kind: 'tool-start', name, isQuestion, ts: now() })
-    trace('tools/execute start', { sid, name, before, after: machine.apply({ kind: 'tick', ts: now() }) })
-    return (async () => {
-      try {
-        return await next()
-      } finally {
-        if (isQuestion) pendingKinds.delete(sid)
-        touch(sid)
-        const beforeEnd = machine.apply({ kind: 'tick', ts: now() })
-        machine.apply({ kind: 'tool-end', ts: now() })
-        trace('tools/execute end', { sid, name, before: beforeEnd, after: machine.apply({ kind: 'tick', ts: now() }) })
+  function ensureSession(sid) {
+    let info = knownSessions.get(sid)
+    if (info === undefined) {
+      info = {
+        state: 'idle',
+        pendingKind: null,
+        lastEventAt: 0,
+        running: false,
+        approvalCount: 0,
+        questionActive: false,
+        subagents: 0,
+        title: null,
       }
-    })()
-  })
-
-  ctx.on('approval/request', (req, next) => {
-    const agent = req !== null && typeof req === 'object' ? req.agent : undefined
-    const sid = agentIdOf(agent)
-    if (sid === null || !isKnownSession(sid)) return next()
-    const machine = knownMachine(sid)
-    if (machine === null) return next()
-    eventCounters.approvals++
-    clearAck(sid)
-    pendingKinds.set(sid, 'approval')
-    approvalCounts.set(sid, (approvalCounts.get(sid) || 0) + 1)
-    const before = machine.apply({ kind: 'tick', ts: now() })
-    machine.apply({ kind: 'approval-start', ts: now() })
-    trace('approval/request start', { sid, before, after: machine.apply({ kind: 'tick', ts: now() }) })
-    return (async () => {
-      try {
-        return await next()
-      } finally {
-        const count = (approvalCounts.get(sid) || 1) - 1
-        if (count <= 0) {
-          approvalCounts.delete(sid)
-          if (pendingKinds.get(sid) === 'approval') pendingKinds.delete(sid)
-        } else {
-          approvalCounts.set(sid, count)
-        }
-        touch(sid)
-        const beforeEnd = machine.apply({ kind: 'tick', ts: now() })
-        machine.apply({ kind: 'approval-end', ts: now() })
-        trace('approval/request end', { sid, before: beforeEnd, after: machine.apply({ kind: 'tick', ts: now() }) })
-      }
-    })()
-  })
-
-  ctx.on('subagent/start', (info) => {
-    const child = childIdOf(info)
-    eventCounters.subagentEvents++
-    if (child === null) return
-    const parentId = parentIdOfChildSession(ctx, child)
-    eventCounters.lastSubagent = { child, parentId }
-    const countChild = (machineKey) => {
-      if (machineKey === null || !isKnownSession(machineKey)) return
-      if (trackedSubagents.has(child)) return
-      trackedSubagents.set(child, machineKey)
-      eventCounters.subagents++
-      clearAck(machineKey)
-      const before = knownMachine(machineKey).apply({ kind: 'tick', ts: now() })
-      knownMachine(machineKey).apply({ kind: 'subagent-start', ts: now() })
-      trace('subagent/start', { child, parent: machineKey, before, after: knownMachine(machineKey).apply({ kind: 'tick', ts: now() }) })
+      knownSessions.set(sid, info)
     }
-    if (parentId !== null && isKnownSession(parentId)) {
-      countChild(parentId)
+    return info
+  }
+
+  function touch(sid, ts = Date.now()) {
+    const info = ensureSession(sid)
+    info.lastEventAt = ts
+    return info
+  }
+
+  function clearBlocked(sid) {
+    const info = ensureSession(sid)
+    if (info.state === 'blocked') info.state = 'idle'
+    return info
+  }
+
+  function computeState(sid) {
+    const info = ensureSession(sid)
+    if (info.state === 'blocked') return info.state
+    if (info.approvalCount > 0 || info.questionActive) {
+      info.state = 'waiting'
+      info.pendingKind = info.approvalCount > 0 ? 'approval' : 'question'
+      return info.state
+    }
+    if (info.subagents > 0 || info.running) {
+      info.state = 'running'
+      info.pendingKind = null
+      return info.state
+    }
+    info.state = 'idle'
+    info.pendingKind = null
+    return info.state
+  }
+
+  function refreshSessions() {
+    const service = getSessionsService(ctx)
+    const hasStore = Boolean(service && typeof service.list === 'function')
+    const list = hasStore ? listSessions(ctx) : []
+    const seen = new Set()
+    for (const entry of list) {
+      if (isChildSession(entry)) continue
+      const sid = sessionIdOfEntry(entry)
+      if (sid === null) continue
+      const info = ensureSession(sid)
+      const title = titleOfEntry(entry)
+      if (title !== null) info.title = title
+      seen.add(sid)
+    }
+    for (const sid of seen) ensureSession(sid)
+    if (hasStore) {
+      liveIds.clear()
+      for (const sid of seen) liveIds.add(sid)
+      // The DSH session store is authoritative for live top-level sessions.
+      for (const sid of [...knownSessions.keys()]) {
+        if (!seen.has(sid)) knownSessions.delete(sid)
+      }
+    } else {
+      liveIds.clear()
+      for (const sid of knownSessions.keys()) liveIds.add(sid)
+    }
+    return seen
+  }
+
+  function sessionIds() {
+    refreshSessions()
+    return [...liveIds]
+  }
+
+  function snapshotSessions() {
+    refreshSessions()
+    const out = []
+    for (const [sid, info] of knownSessions) {
+      const entry = { sessionId: sid }
+      if (info.title) entry.title = info.title
+      if (info.lastEventAt > 0) entry.lastEventAt = info.lastEventAt
+      if (info.state !== 'idle') {
+        entry.state = info.state
+        if (info.pendingKind) entry.pendingKind = info.pendingKind
+      }
+      out.push(entry)
+    }
+    return out
+  }
+
+  function directoryEntries() {
+    refreshSessions()
+    const out = []
+    for (const sid of liveIds) {
+      const info = ensureSession(sid)
+      const entry = { sessionId: sid, title: info.title || sid }
+      if (info.state !== 'idle') entry.state = info.state
+      if (info.lastEventAt > 0) entry.updatedAt = info.lastEventAt
+      out.push(entry)
+    }
+    return out
+  }
+
+  function send(event) {
+    if (!connected || socket === null || typeof socket.send !== 'function') return false
+    const result = validatePetEvent(event)
+    if (!result.ok) {
+      log('dropping invalid wire event', event, result.errors)
+      return false
+    }
+    try {
+      socket.send(JSON.stringify(event))
+      return true
+    } catch (error) {
+      log('send failed', error)
+      return false
+    }
+  }
+
+  function sendHello() {
+    return send({ type: 'hello', agent, protocolVersion: PROTOCOL_VERSION })
+  }
+
+  function sendSnapshot() {
+    return send({ type: 'snapshot', agent, sessions: snapshotSessions() })
+  }
+
+  function sendDirectory() {
+    return send({ type: 'session/directory', agent, sessions: directoryEntries() })
+  }
+
+  function sendSync() {
+    return send({ type: 'session/sync', agent, sessionIds: sessionIds() })
+  }
+
+  function handleIncoming(data) {
+    let event
+    try {
+      if (typeof Buffer !== 'undefined' && Buffer.isBuffer(data)) data = data.toString('utf8')
+      if (data instanceof ArrayBuffer) data = Buffer.from(data).toString('utf8')
+      event = typeof data === 'string' ? JSON.parse(data) : data
+    } catch {
       return
     }
-    // 子会话可能晚一拍才可见：做几次短延迟重试，仍不可识别则跳过。
-    for (const delay of [0, 10, 50, 200]) {
-      setTimeout(() => {
-        if (trackedSubagents.has(child)) return
-        const lateParentId = parentIdOfChildSession(ctx, child)
-        eventCounters.lastSubagent = { child, parentId: lateParentId, retryDelay: delay }
-        if (lateParentId === null || !isKnownSession(lateParentId)) return
-        countChild(lateParentId)
-      }, delay)
+    if (event === null || typeof event !== 'object') return
+    if (event.type === 'session/open') {
+      const sid = sessionIdOf(event)
+      if (sid === null) return
+      openSession(sid, event.reason)
     }
-  }, { global: true })
-
-  ctx.on('subagent/end', (info) => {
-    const child = childIdOf(info)
-    if (child === null || !trackedSubagents.has(child)) return
-    const machineKey = trackedSubagents.get(child)
-    trackedSubagents.delete(child)
-    if (machineKey === null || !isKnownSession(machineKey)) return
-    touch(machineKey)
-    const before = machineFor(machineKey).apply({ kind: 'tick', ts: now() })
-    machineFor(machineKey).apply({ kind: 'subagent-end', ts: now() })
-    trace('subagent/end', { child, parent: machineKey, before, after: machineFor(machineKey).apply({ kind: 'tick', ts: now() }) })
-  }, { global: true })
-
-  async function ensureInit() {
-    if (libraryRoot !== null) return
-    if (initPromise === null) {
-      initPromise = (async () => {
-        const found = await findHome(ctx)
-        if (found.error !== undefined) throw new Error(`无法定位用户主目录 [${found.error}]`)
-        libraryRoot = found.libraryRoot
-        libraryDir = joinPath(libraryRoot, 'pets')
-        sourceDir = found.codexRoot
-        // 持久插件可以直接建目录：用户要求 Codex 包导入到 dsh/pets 下。
-        await mkdir(libraryDir, { recursive: true })
-      })().catch((error) => {
-        initPromise = null
-        throw error
-      })
-    }
-    return initPromise
   }
 
-  // ===== RPC handlers =====
+  function openSession(sid, reason) {
+    const candidates = []
+    const sessions = getSessionsService(ctx)
+    if (sessions) candidates.push(sessions)
+    if (ctx && typeof ctx.openSession === 'function') candidates.push({ open: ctx.openSession })
+    for (const candidate of candidates) {
+      if (candidate && typeof candidate.open === 'function') {
+        try {
+          const result = candidate.open(sid, reason)
+          if (result && typeof result.catch === 'function') {
+            result.catch((error) => log('open session failed', error))
+          }
+          return true
+        } catch (error) {
+          log('open session failed', error)
+        }
+      }
+    }
+    // Graceful fallback: let any host listener decide how to open the session.
+    if (ctx && typeof ctx.emit === 'function') {
+      try { ctx.emit('session/open', { sessionId: sid, reason }) } catch { /* no-op */ }
+      return true
+    }
+    log('received session/open but no opener is available', { sessionId: sid, reason })
+    return false
+  }
 
-  async function getStatus() {
-    const ts = now()
-    const activities = []
-    for (const [sid, machine] of machines) {
-      const result = machine.apply({ kind: 'tick', ts })
-      if (result.state === 'idle') continue
-      activities.push({
-        sessionId: sid,
-        state: result.state,
-        bubbleKey: result.bubbleKey,
-        bubbleParams: result.bubbleParams,
-        lastEventAt: lastEventAt.get(sid) || 0,
-        pendingKind: result.state === 'waiting' ? (pendingKinds.get(sid) || null) : null,
-        acknowledged: acknowledged.has(sid),
-      })
+  function connect() {
+    if (stopped) return
+    started = true
+    if (socket !== null && (socket.readyState === 0 || socket.readyState === 1)) return
+    if (!WebSocketImpl) {
+      log('WebSocket implementation unavailable; bridge disabled')
+      scheduleReconnect()
+      return
     }
-    let machine = machines.get(currentSession)
-    let current = machine === undefined ? null : machine.apply({ kind: 'tick', ts })
-    if (current === null && currentSession === null && activities.length > 0) {
-      const order = { waiting: 0, failed: 1, ready: 2, working: 3 }
-      const top = activities.slice().sort((a, b) => {
-        const pa = order[a.state] !== undefined ? order[a.state] : 9
-        const pb = order[b.state] !== undefined ? order[b.state] : 9
-        if (pa !== pb) return pa - pb
-        return (b.lastEventAt || 0) - (a.lastEventAt || 0)
-      })[0]
-      current = { state: top.state, bubbleKey: top.bubbleKey, bubbleParams: top.bubbleParams }
+    try {
+      socket = new WebSocketImpl(url)
+    } catch (error) {
+      log('websocket construction failed', error)
+      socket = null
+      scheduleReconnect()
+      return
     }
-    if (current === null) current = { state: 'idle', bubbleKey: 'idle', bubbleParams: null }
-    trace('getStatus', {
-      currentSession,
-      state: current.state,
-      bubbleKey: current.bubbleKey,
-      bubbleParams: current.bubbleParams,
-      activities: activities.map((a) => ({ sessionId: a.sessionId, state: a.state, bubbleKey: a.bubbleKey, bubbleParams: a.bubbleParams, lastEventAt: a.lastEventAt, acknowledged: a.acknowledged })),
+
+    socket.onopen = () => {
+      connected = true
+      retryAttempt = 0
+      log('connected', url)
+      sendHello()
+      sendSnapshot()
+      sendDirectory()
+      sendSync()
+    }
+
+    socket.onmessage = (event) => {
+      const data = event && typeof event === 'object' && 'data' in event ? event.data : event
+      handleIncoming(data)
+    }
+
+    socket.onerror = (error) => {
+      log('websocket error', error)
+      if (!connected) scheduleReconnect()
+    }
+
+    socket.onclose = () => {
+      if (!connected && socket === null) return
+      connected = false
+      socket = null
+      log('disconnected')
+      scheduleReconnect()
+    }
+  }
+
+  function scheduleReconnect() {
+    if (stopped) return
+    if (retryTimer !== null) return
+    const base = Number.isFinite(reconnectDelay) && reconnectDelay > 0 ? reconnectDelay : DEFAULT_RECONNECT_MS
+    const delay = Math.min(base * Math.pow(2, retryAttempt), maxReconnectDelay || MAX_RECONNECT_MS)
+    retryAttempt++
+    log('reconnecting in', delay, 'ms')
+    retryTimer = setTimeout(() => {
+      retryTimer = null
+      connect()
+    }, delay)
+    if (retryTimer && typeof retryTimer.unref === 'function') retryTimer.unref()
+  }
+
+  function start() {
+    if (started) return
+    started = true
+    stopped = false
+    refreshSessions()
+    connect()
+  }
+
+  function stop() {
+    stopped = true
+    started = false
+    if (retryTimer !== null) {
+      clearTimeout(retryTimer)
+      retryTimer = null
+    }
+    if (socket !== null) {
+      const old = socket
+      socket = null
+      connected = false
+      try { old.close() } catch { /* no-op */ }
+    }
+  }
+
+  function handleSubagentStart(child, parent, info) {
+    if (childParent.has(child)) return
+    childParent.set(child, parent)
+    const parentInfo = clearBlocked(parent)
+    touch(parent)
+    parentInfo.subagents = (parentInfo.subagents || 0) + 1
+    computeState(parent)
+    send({
+      type: 'subagent/start',
+      agent,
+      sessionId: parent,
+      ...(child ? { childSessionId: child } : {}),
+      ...(subagentNameOf(info) ? { name: subagentNameOf(info) } : {}),
     })
-    return {
-      ok: true,
-      state: current.state,
-      bubbleKey: current.bubbleKey,
-      bubbleParams: current.bubbleParams,
-      activities,
-      seen: { ...eventCounters },
-      currentSession,
+  }
+
+  if (ctx && typeof ctx.on === 'function') {
+    const onSessionCreated = (session) => {
+      const sid = sessionIdOfEntry(session)
+      if (sid !== null && !isChildSession(session)) {
+        const info = ensureSession(sid)
+        const title = titleOfEntry(session)
+        if (title !== null) info.title = title
+        liveIds.add(sid)
+      }
+      sendDirectory()
+      sendSync()
     }
-  }
-
-  async function setCurrentSession(args) {
-    const sid = args !== null && typeof args === 'object' && typeof args.sessionId === 'string'
-      ? args.sessionId
-      : null
-    const prev = currentSession
-    currentSession = sid
-    if (sid !== null) {
-      knownSessions.add(sid)
-      const machine = machines.get(sid)
-      if (machine !== undefined) {
-        const result = machine.apply({ kind: 'tick', ts: now() })
-        if (result.state === 'failed') acknowledged.add(sid)
+    const onSessionDisposed = (session) => {
+      const sid = sessionIdOfEntry(session)
+      if (sid !== null) {
+        knownSessions.delete(sid)
+        liveIds.delete(sid)
       }
+      sendDirectory()
+      sendSync()
     }
-    trace('setCurrentSession', { from: prev, to: sid })
-    return { ok: true }
-  }
+    ctx.on('session/created', onSessionCreated)
+    ctx.on('session/disposed', onSessionDisposed)
 
-  async function syncSessions(args) {
-    const raw = args !== null && typeof args === 'object' && Array.isArray(args.ids) ? args.ids : []
-    const next = new Set(raw.filter((id) => typeof id === 'string'))
-    if (currentSession !== null) next.add(currentSession)
-    for (const key of machines.keys()) {
-      if (!next.has(key)) {
-        machines.delete(key)
-        lastEventAt.delete(key)
-        pendingKinds.delete(key)
-        approvalCounts.delete(key)
-        acknowledged.delete(key)
-        for (const [child, parent] of trackedSubagents) {
-          if (parent === key) trackedSubagents.delete(child)
-        }
-      }
-    }
-    knownSessions.clear()
-    for (const id of next) knownSessions.add(id)
-    trace('syncSessions', { ids: raw, known: [...knownSessions] })
-    return { ok: true }
-  }
+    ctx.on('agent/status', (payload) => {
+      const sid = sessionIdOf(payload && payload.agent)
+      if (sid === null) return
+      const info = clearBlocked(sid)
+      touch(sid)
+      const status = payload && payload.status === 'running' ? 'running' : 'idle'
+      info.running = status === 'running'
+      computeState(sid)
+      send({ type: 'session/status', agent, sessionId: sid, status })
+    })
 
-  async function resetAcknowledged() {
-    acknowledged.clear()
-    return { ok: true }
-  }
-
-  async function loadState() {
-    try {
-      await ensureInit()
-      if (!(await pathExists(stateFile()))) return { ok: true, state: null }
-      return { ok: true, state: await readJson(stateFile()) }
-    } catch (error) {
-      return { ok: false, error: errorText(error) }
-    }
-  }
-
-  async function saveState(args) {
-    try {
-      await ensureInit()
-      const state = args !== null && typeof args === 'object' && !Array.isArray(args) ? args : {}
-      await writeJson(stateFile(), state)
-      return { ok: true }
-    } catch (error) {
-      return { ok: false, error: errorText(error) }
-    }
-  }
-
-  async function listPets() {
-    try {
-      await ensureInit()
-      const entries = (await readdir(libraryDir, { withFileTypes: true }))
-        .filter((entry) => entry.isDirectory())
-        .sort((a, b) => a.name.localeCompare(b.name))
-      const pets = []
-      for (const entry of entries) {
-        const id = entry.name
-        try {
-          const files = (await readdir(petDir(id))).map((file) => file)
-          const assessed = assessPackageDir(files)
-          if (!assessed.valid) continue
-          const json = await readJson(joinPath(petDir(id), 'pet.json'))
-          pets.push({
-            id,
-            displayName: typeof json.displayName === 'string' && json.displayName !== '' ? json.displayName : id,
-            description: typeof json.description === 'string' ? json.description : '',
-          })
-        } catch (error) {
-          ctx.logger?.warn?.(`[pet] listPets 读取失败 ${entry.name}: ${errorText(error)}`)
-        }
-      }
-      return { ok: true, pets }
-    } catch (error) {
-      return { ok: false, error: errorText(error), pets: [] }
-    }
-  }
-
-  async function listImportCandidates() {
-    try {
-      await ensureInit()
-      if (sourceDir === null) return { ok: false, error: '无法定位 Codex 宠物目录', candidates: [] }
-      if (!(await pathExists(sourceDir))) return { ok: true, candidates: [] }
-      const entries = await readdir(sourceDir, { withFileTypes: true })
-      const candidates = []
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue
-        const name = entry.name
-        const srcBase = joinPath(sourceDir, name)
-        let files
-        try {
-          files = (await readdir(srcBase)).map((file) => file)
-        } catch {
-          continue
-        }
-        const assessed = assessPackageDir(files)
-        let displayName = name
-        if (assessed.valid) {
-          try {
-            const json = await readJson(joinPath(srcBase, 'pet.json'))
-            if (typeof json.displayName === 'string') displayName = json.displayName
-          } catch {
-            // 保留目录名。
-          }
-        }
-        candidates.push({
-          id: name,
-          displayName,
-          valid: assessed.valid,
-          reason: assessed.reason,
-          existsInLibrary: assessed.valid ? await pathExists(petDir(name)) : false,
-        })
-      }
-      return { ok: true, candidates }
-    } catch (error) {
-      return { ok: false, error: errorText(error), candidates: [] }
-    }
-  }
-
-  async function importPet(args) {
-    try {
-      await ensureInit()
-      const rawPath = args !== null && typeof args === 'object' && typeof args.path === 'string' ? args.path : null
-      const rawId = args !== null && typeof args === 'object' && typeof args.id === 'string' ? args.id : null
-      let srcBase
-      let id
-      if (rawPath !== null) {
-        srcBase = normalizePath(rawPath)
-        let srcStat
-        try {
-          srcStat = await stat(srcBase)
-        } catch {
-          return { ok: false, error: '路径不存在' }
-        }
-        if (!srcStat.isDirectory()) return { ok: false, error: '路径不是目录' }
-        const directPetJson = joinPath(srcBase, 'pet.json')
-        if (!(await pathExists(directPetJson))) {
-          // 所选目录不是单个宠物包：尝试批量导入其直接子目录中的宠物包。
-          let childEntries
-          try {
-            childEntries = await readdir(srcBase, { withFileTypes: true })
-          } catch {
-            return { ok: false, error: '路径不可读' }
-          }
-          const summary = { imported: 0, skipped: 0, failed: 0, errors: [] }
-          const children = childEntries.filter((child) => child.isDirectory())
-          // 批量导入改为有限并发（串行逐个导入在宠物多/图集大时很慢）。
-          // 并发数取小值，避免同时复制过多大文件把磁盘 IO 打满。
-          const CONCURRENCY = 3
-          let cursor = 0
-          async function worker() {
-            while (true) {
-              const idx = cursor++
-              if (idx >= children.length) return
-              const child = children[idx]
-              const childPath = joinPath(srcBase, child.name)
-              if (!(await pathExists(joinPath(childPath, 'pet.json')))) continue
-              const childResult = await importPet({ path: childPath })
-              console.log('[pet] 批量导入子目录', child.name, childResult)
-              if (childResult.ok) {
-                summary.imported++
-              } else if (typeof childResult.error === 'string' && childResult.error.includes('同名宠物已存在')) {
-                summary.skipped++
-              } else {
-                summary.failed++
-                summary.errors.push(`${child.name}: ${childResult.error}`)
-              }
-            }
-          }
-          await Promise.all(
-            Array.from({ length: Math.min(CONCURRENCY, children.length) }, () => worker()),
-          )
-          if (summary.imported === 0 && summary.skipped === 0 && summary.failed === 0) {
-            return { ok: false, error: '所选目录下没有找到宠物包' }
-          }
-          return { ok: true, ...summary }
-        }
-        const jsonForId = await readJson(directPetJson).catch(() => null)
-        const declaredId = jsonForId !== null && typeof jsonForId === 'object' && typeof jsonForId.id === 'string' ? jsonForId.id : null
-        id = safeLibraryId(declaredId)
-        if (id === null) return { ok: false, error: '宠物包缺少合法 id' }
-      } else {
-        id = safeLibraryId(rawId)
-        if (id === null) return { ok: false, error: '非法宠物 id' }
-        if (sourceDir === null) return { ok: false, error: '无法定位 Codex 宠物目录' }
-        srcBase = joinPath(sourceDir, id)
-      }
-      if (await pathExists(petDir(id))) {
-        return { ok: false, error: '同名宠物已存在' }
-      }
-      const json = await readJson(joinPath(srcBase, 'pet.json'))
-      const rawSprite = typeof json.spritesheetPath === 'string' ? json.spritesheetPath : 'spritesheet.png'
-      const spriteName = safeSpriteName(rawSprite)
-      if (spriteName === null) return { ok: false, error: '非法图集路径' }
-      const spritePath = joinPath(srcBase, spriteName)
-      if (!(await pathExists(spritePath))) {
-        return { ok: false, error: `源图集缺失: ${spriteName}` }
-      }
-      const spriteInfo = await stat(spritePath)
-      if (spriteInfo.size > SPRITE_MAX) return { ok: false, error: '图集超过 25MB 上限' }
-      // 只读头部即可解析宽高，不再把整张图集读进内存（图集最大 25MB）。
-      const header = await readSpriteHeader(spritePath)
-      const dims = header.length >= 24 ? imageDims(header) : null
-      if (dims === null) return { ok: false, error: '图集不是支持的图片格式（PNG/WebP）' }
-      if (dims.width % CELL_W !== 0 || dims.height % CELL_H !== 0 || dims.width / CELL_W !== 8) {
-        return { ok: false, error: `图集尺寸不支持: ${dims.width}x${dims.height}` }
-      }
-      const atlasRows = dims.height / CELL_H
-      const parsed = parsePetJson(JSON.stringify(json), atlasRows)
-      if (!parsed.ok) return { ok: false, error: parsed.errors.join('; ') }
-
-      // 导入 = 只复制运行时必需的 pet.json 与图集到 dsh/pets/<id>，
-      // 不再整目录复制（避免把预览图、文档、.git 等无关大文件一起拷走）。
-      const destDir = petDir(id)
-      await rm(destDir, { recursive: true, force: true })
-      await mkdir(destDir, { recursive: true })
-      await copyFile(joinPath(srcBase, 'pet.json'), joinPath(destDir, 'pet.json'))
-      await copyFile(spritePath, joinPath(destDir, spriteName))
-      if (!(await pathExists(joinPath(destDir, 'pet.json')))) {
-        return { ok: false, error: '复制后校验失败：缺少 pet.json' }
-      }
-      spriteCache.delete(id)
-      return { ok: true }
-    } catch (error) {
-      console.error('[pet] importPet 异常', error)
-      return { ok: false, error: errorText(error) }
-    }
-  }
-
-  async function getPet(args) {
-    try {
-      await ensureInit()
-      const rawId = args !== null && typeof args === 'object' && typeof args.id === 'string' ? args.id : null
-      const id = safeLibraryId(rawId)
-      if (id === null) return { ok: false, error: '非法宠物 id' }
-      const cached = spriteCache.get(id)
-      if (cached !== undefined) return cached
-      const pkgDir = petDir(id)
-      const jsonText = await readText(joinPath(pkgDir, 'pet.json'))
-      const json = JSON.parse(jsonText)
-      const rawSprite = typeof json.spritesheetPath === 'string' ? json.spritesheetPath : 'spritesheet.png'
-      const spriteName = safeSpriteName(rawSprite)
-      if (spriteName === null) return { ok: false, error: '宠物数据损坏：非法图集路径' }
-      const spritePath = joinPath(pkgDir, spriteName)
-      if (!(await pathExists(spritePath))) return { ok: false, error: `图集缺失: ${spriteName}` }
-      const bytes = await readFile(spritePath)
-      if (bytes.length > SPRITE_MAX) return { ok: false, error: '图集超过 25MB 上限' }
-      const dims = imageDims(bytes)
-      if (dims === null) return { ok: false, error: '图集不是支持的图片格式（PNG/WebP）' }
-      if (dims.width % CELL_W !== 0 || dims.height % CELL_H !== 0 || dims.width / CELL_W !== 8) {
-        return { ok: false, error: `图集尺寸不支持: ${dims.width}x${dims.height}` }
-      }
-      const atlasRows = dims.height / CELL_H
-      const parsed = parsePetJson(jsonText, atlasRows)
-      if (!parsed.ok) return { ok: false, error: parsed.errors.join('; ') }
-      const result = {
-        ok: true,
-        pet: parsed.pet,
-        spriteUrl: `/pet/sprite/${id}`,
-        atlas: { rows: atlasRows },
-      }
-      spriteCache.set(id, result)
-      return result
-    } catch (error) {
-      return { ok: false, error: errorText(error) }
-    }
-  }
-
-  async function deletePet(args) {
-    try {
-      await ensureInit()
-      const rawId = args !== null && typeof args === 'object' && typeof args.id === 'string' ? args.id : null
-      const id = safeLibraryId(rawId)
-      if (id === null) return { ok: false, error: '非法宠物 id' }
-      const target = petDir(id)
-      if (!(await pathExists(target))) return { ok: false, error: '宠物不存在' }
-      await rm(target, { recursive: true, force: true })
-      spriteCache.delete(id)
-      return { ok: true }
-    } catch (error) {
-      return { ok: false, error: errorText(error) }
-    }
-  }
-
-  const UPDATE_CACHE_MS = 60 * 1000
-  let updateCache = null
-  let updateCacheAt = 0
-
-  async function getPluginVersion() {
-    try {
-      const pkg = require('../package.json')
-      return {
-        ok: true,
-        name: typeof pkg.name === 'string' ? pkg.name : '',
-        version: typeof pkg.version === 'string' ? pkg.version : '0.0.0',
-      }
-    } catch (error) {
-      return { ok: false, error: errorText(error) }
-    }
-  }
-
-  async function checkUpdate(args) {
-    try {
-      const now = Date.now()
-      if (updateCache !== null && now - updateCacheAt < UPDATE_CACHE_MS) {
-        return { ...updateCache, cached: true }
-      }
-      const pkg = require('../package.json')
-      const registry = (args !== null && typeof args === 'object' && typeof args.registry === 'string' && args.registry !== '')
-        ? args.registry
-        : (process.env.DSH_PET_REGISTRY || undefined)
-      const result = await checkForUpdate({
-        current: typeof pkg.version === 'string' ? pkg.version : '0.0.0',
-        packageName: typeof pkg.name === 'string' ? pkg.name : '',
-        registry,
+    ctx.on('agent/error', (payload) => {
+      const sid = sessionIdOf(payload && payload.agent)
+      if (sid === null) return
+      const info = touch(sid)
+      info.state = 'blocked'
+      info.pendingKind = null
+      send({
+        type: 'session/error',
+        agent,
+        sessionId: sid,
+        message: safeString(payload && (payload.message ?? payload.error), 'error'),
+        ...((payload && typeof payload.kind === 'string' && payload.kind) ? { kind: payload.kind } : {}),
+        ...((payload && (typeof payload.code === 'string' || typeof payload.code === 'number')) ? { code: payload.code } : {}),
       })
-      if (result.ok) {
-        updateCache = result
-        updateCacheAt = now
-      }
-      return result
-    } catch (error) {
-      return { ok: false, error: errorText(error) }
-    }
-  }
+    })
 
-  const handlers = {
-    'getStatus': getStatus,
-    'setCurrentSession': setCurrentSession,
-    'syncSessions': syncSessions,
-    'resetAcknowledged': resetAcknowledged,
-    'loadState': loadState,
-    'saveState': saveState,
-    'listPets': listPets,
-    'listImportCandidates': listImportCandidates,
-    'importPet': importPet,
-    'deletePet': deletePet,
-    'getPet': getPet,
-    'getPluginVersion': getPluginVersion,
-    'checkUpdate': checkUpdate,
-  }
+    ctx.on('tools/execute', (exec, next) => {
+      const sid = sessionIdOf(exec && exec.agent)
+      if (sid === null) return typeof next === 'function' ? next() : undefined
+      const info = clearBlocked(sid)
+      touch(sid)
+      const name = toolNameOf(exec)
+      const isQuestion = name === 'ask_user_question'
 
-  ctx.effect(() => ctx.webServer.register({
-    kind: 'prefix',
-    path: '/pet',
-    handler: async (req, res) => {
-      let pathname
-      try {
-        pathname = new URL(req.url ?? '/', 'http://dsh.internal').pathname
-      } catch {
-        sendJson(res, 400, { ok: false, error: '非法请求路径' })
-        return
+      if (isQuestion) {
+        info.questionActive = true
+        info.state = 'waiting'
+        info.pendingKind = 'question'
+        const event = { type: 'question/start', agent, sessionId: sid }
+        const prompt = promptOf(exec)
+        if (prompt !== undefined) event.prompt = prompt
+        send(event)
+      } else {
+        info.running = true
+        computeState(sid)
+        send({ type: 'tool/start', agent, sessionId: sid, name })
       }
-      // 图集静态文件：/pet/sprite/<id> —— 浏览器按图片 URL 流式加载，
-      // 避免 getPet 把整张图集 base64 塞进 JSON 导致客户端解析极慢。
-      const SPRITE_PREFIX = '/pet/sprite/'
-      if (pathname.startsWith(SPRITE_PREFIX)) {
-        if (req.method !== 'GET') {
-          sendJson(res, 405, { ok: false, error: '仅支持 GET' })
-          return
-        }
-        const spriteId = safeLibraryId(decodeURIComponent(pathname.slice(SPRITE_PREFIX.length)))
-        if (spriteId === null) {
-          sendJson(res, 400, { ok: false, error: '非法宠物 id' })
-          return
-        }
+
+      if (typeof next !== 'function') return undefined
+      return (async () => {
+        let result
         try {
-          await ensureInit()
-          const json = await readJson(joinPath(petDir(spriteId), 'pet.json'))
-          const rawSprite = typeof json.spritesheetPath === 'string' ? json.spritesheetPath : 'spritesheet.png'
-          const spriteName = safeSpriteName(rawSprite)
-          if (spriteName === null) {
-            sendJson(res, 400, { ok: false, error: '非法图集路径' })
-            return
+          result = await next()
+          return result
+        } finally {
+          touch(sid)
+          if (isQuestion) {
+            info.questionActive = false
+            computeState(sid)
+            const event = { type: 'question/end', agent, sessionId: sid }
+            const answer = answerOf(result)
+            if (answer !== undefined) event.answer = answer
+            send(event)
+          } else {
+            computeState(sid)
+            send({ type: 'tool/end', agent, sessionId: sid, name })
           }
-          const spritePath = joinPath(petDir(spriteId), spriteName)
-          if (!(await pathExists(spritePath))) {
-            sendJson(res, 404, { ok: false, error: '图集缺失' })
-            return
+        }
+      })()
+    })
+
+    ctx.on('approval/request', (req, next) => {
+      const sid = sessionIdOf(req && req.agent)
+      if (sid === null) return typeof next === 'function' ? next() : undefined
+      const info = clearBlocked(sid)
+      touch(sid)
+      info.approvalCount = (info.approvalCount || 0) + 1
+      info.state = 'waiting'
+      info.pendingKind = 'approval'
+      send({ type: 'approval/start', agent, sessionId: sid, count: info.approvalCount })
+
+      if (typeof next !== 'function') return undefined
+      return (async () => {
+        try {
+          return await next()
+        } finally {
+          touch(sid)
+          info.approvalCount = Math.max(0, (info.approvalCount || 1) - 1)
+          if (info.approvalCount === 0) {
+            computeState(sid)
+            send({ type: 'approval/end', agent, sessionId: sid, count: 0 })
+          } else {
+            // Keep waiting until all concurrent approvals have resolved.
+            info.state = 'waiting'
+            info.pendingKind = 'approval'
           }
-          const info = await stat(spritePath)
-          res.writeHead(200, {
-            'content-type': spriteMime(spriteName),
-            'cache-control': 'public, max-age=3600',
-            'content-length': String(info.size),
-          })
-          await new Promise((resolve, reject) => {
-            const stream = createReadStream(spritePath)
-            stream.on('error', reject)
-            stream.on('end', resolve)
-            stream.pipe(res)
-          })
-        } catch (error) {
-          console.error('[pet] sprite 路由异常', errorText(error))
-          if (!res.headersSent) sendJson(res, 500, { ok: false, error: errorText(error) })
-          else res.end()
+        }
+      })()
+    })
+
+    ctx.on('subagent/start', (info) => {
+      const child = childIdOf(info)
+      if (child === null) return
+      const parent = parentSessionIdOf(ctx, child, info) ?? info.parentSessionId ?? info.parentId
+      if (parent === null || parent === undefined) {
+        for (const delay of [0, 10, 50, 200]) {
+          setTimeout(() => {
+            const lateParent = parentSessionIdOf(ctx, child, info) ?? info.parentSessionId ?? info.parentId
+            if (lateParent === null || lateParent === undefined) return
+            handleSubagentStart(child, lateParent, info)
+          }, delay)
         }
         return
       }
+      handleSubagentStart(child, parent, info)
+    }, { global: true })
 
-      const method = rpcMethodOf(pathname)
-      if (method === null || handlers[method] === undefined) {
-        sendJson(res, 404, { ok: false, error: `未知方法: ${pathname}` })
-        return
-      }
-      if (req.method !== 'POST' && req.method !== 'GET') {
-        sendJson(res, 405, { ok: false, error: '仅支持 POST/GET' })
-        return
-      }
-      let args = {}
-      try {
-        args = await readJsonBody(req, RPC_BODY_MAX)
-      } catch (error) {
-        sendJson(res, error.statusCode ?? 400, { ok: false, error: errorText(error) })
-        return
-      }
-      try {
-        sendJson(res, 200, await handlers[method](args))
-      } catch (error) {
-        ctx.logger?.warn?.(`[pet] ${method} 异常: ${errorText(error)}`)
-        sendJson(res, 500, { ok: false, error: errorText(error) })
-      }
-    },
-  }), 'dsh-pet: /pet RPC 路由')
+    ctx.on('subagent/end', (info) => {
+      const child = sessionIdOf(info)
+      if (child === null || !childParent.has(child)) return
+      const parent = childParent.get(child)
+      childParent.delete(child)
+      if (parent === null) return
+      const parentInfo = touch(parent)
+      parentInfo.subagents = Math.max(0, (parentInfo.subagents || 0) - 1)
+      computeState(parent)
+      send({
+        type: 'subagent/end',
+        agent,
+        sessionId: parent,
+        ...(child ? { childSessionId: child } : {}),
+        ...(subagentNameOf(info) ? { name: subagentNameOf(info) } : {}),
+      })
+    }, { global: true })
+  }
+
+  return {
+    start,
+    stop,
+    connect,
+    scheduleReconnect,
+    send,
+    sendHello,
+    sendSnapshot,
+    sendDirectory,
+    sendSync,
+    handleIncoming,
+    openSession,
+    refreshSessions,
+    snapshotSessions,
+    directoryEntries,
+    sessionIds,
+    get knownSessions() { return knownSessions },
+    get liveSessionIds() { return [...liveIds] },
+    get connected() { return connected },
+    get socket() { return socket },
+    get url() { return url },
+    get agent() { return agent },
+  }
 }
-export { rpcMethodOf, safeLibraryId, safeSpriteName }
+
+export function apply(ctx, options = {}) {
+  const bridge = createBridge(ctx, options)
+  if (ctx && typeof ctx.effect === 'function') {
+    ctx.effect(() => {
+      bridge.start()
+      return () => bridge.stop()
+    }, 'dsh-pet: bridge websocket client')
+  }
+  bridge.start()
+  return bridge
+}
+
+export { createSessionKey, DEFAULT_PORT, DEFAULT_WS_URL, PROTOCOL_VERSION }
