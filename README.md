@@ -30,10 +30,11 @@ npm run typecheck   # 所有 TypeScript workspace 类型检查
 
 ```sh
 cd plugins/pet
-npm test        # 运行桥接翻译与重连测试
+npm run build   # 语法检查插件与设置页客户端
+npm test        # 运行桥接翻译、重连与设置开关测试
 ```
 
-不再构建浏览器客户端 bundle；插件只包含宿主侧 WebSocket 客户端。
+桥接插件只发布 DSH 侧翻译器与设置页极简入口；宠物渲染、宠物库和状态机都在桌宠侧。
 
 ### 桌宠（apps/desktop-pet）
 
@@ -50,3 +51,5 @@ npm test
 dsh plugin --profile web add @yshark/dsh-codex-pet
 dsh web
 ```
+
+安装后可在 DSH 设置页看到“桌宠”面板，用于启用/停用桥接、查看连接状态和打开桌宠。

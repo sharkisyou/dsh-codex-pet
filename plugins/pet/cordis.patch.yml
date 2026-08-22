@@ -1,5 +1,6 @@
 # @yshark/dsh-codex-pet 桥接插件 bundle 补丁：安装为 profile bundle 时插入宿主行。
-# 桥接插件只监听 DSH 会话事件并推送 WebSocket 线协议，不依赖 HTTP 路由。
+# 插件在 DSH 设置页提供极简桌宠面板，因此需要 webServer 提供 /pet/bridge/* 状态与控制接口。
 - insert:
     - id: pet
       name: '@yshark/dsh-codex-pet'
+      inject: [webServer]

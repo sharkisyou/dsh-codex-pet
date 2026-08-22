@@ -11,7 +11,7 @@ import {
 const require = createRequire(import.meta.url)
 
 export const name = 'pet'
-export const inject = []
+export const inject = ['webServer']
 
 export const BRIDGE_AGENT = 'dsh'
 export const DEFAULT_RECONNECT_MS = 1000
@@ -277,9 +277,61 @@ export function createBridge(ctx, options = {}) {
   let socket = null
   let started = false
   let stopped = false
+  let enabled = options.enabled !== false
   let connected = false
   let retryTimer = null
   let retryAttempt = 0
+  let lastError = null
+
+  function status() {
+    return {
+      enabled,
+      started,
+      connected,
+      connecting: Boolean(socket && typeof socket.readyState === 'number' && socket.readyState === 0),
+      url,
+      agent,
+      reconnectAttempt: retryAttempt,
+      lastError,
+    }
+  }
+
+  function setEnabled(next) {
+    const value = Boolean(next)
+    if (value === enabled) return status()
+    enabled = value
+    if (enabled) {
+      lastError = null
+      start()
+    } else {
+      stop()
+    }
+    return status()
+  }
+
+  function openPet() {
+    if (ctx && typeof ctx.openPet === 'function') {
+      try {
+        const result = ctx.openPet()
+        if (result && typeof result.catch === 'function') {
+          result.catch((error) => log('openPet failed', error))
+        }
+        return { ok: true, opened: true }
+      } catch (error) {
+        log('openPet failed', error)
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+    if (ctx && typeof ctx.emit === 'function') {
+      try {
+        ctx.emit('pet/open', { url, agent })
+        return { ok: true, opened: true }
+      } catch {
+        // fall through
+      }
+    }
+    return { ok: true, opened: false, hint: '请手动启动桌宠应用' }
+  }
 
   const knownSessions = new Map()
   const childParent = new Map()
@@ -473,10 +525,11 @@ export function createBridge(ctx, options = {}) {
   }
 
   function connect() {
-    if (stopped) return
+    if (stopped || !enabled) return
     started = true
     if (socket !== null && (socket.readyState === 0 || socket.readyState === 1)) return
     if (!WebSocketImpl) {
+      lastError = 'WebSocket implementation unavailable'
       log('WebSocket implementation unavailable; bridge disabled')
       scheduleReconnect()
       return
@@ -484,6 +537,7 @@ export function createBridge(ctx, options = {}) {
     try {
       socket = new WebSocketImpl(url)
     } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error ?? 'websocket construction failed')
       log('websocket construction failed', error)
       socket = null
       scheduleReconnect()
@@ -493,6 +547,7 @@ export function createBridge(ctx, options = {}) {
     socket.onopen = () => {
       connected = true
       retryAttempt = 0
+      lastError = null
       log('connected', url)
       sendHello()
       sendSnapshot()
@@ -506,6 +561,7 @@ export function createBridge(ctx, options = {}) {
     }
 
     socket.onerror = (error) => {
+      lastError = error instanceof Error ? error.message : String(error ?? 'websocket error')
       log('websocket error', error)
       if (!connected) scheduleReconnect()
     }
@@ -520,7 +576,7 @@ export function createBridge(ctx, options = {}) {
   }
 
   function scheduleReconnect() {
-    if (stopped) return
+    if (stopped || !enabled) return
     if (retryTimer !== null) return
     const base = Number.isFinite(reconnectDelay) && reconnectDelay > 0 ? reconnectDelay : DEFAULT_RECONNECT_MS
     const delay = Math.min(base * Math.pow(2, retryAttempt), maxReconnectDelay || MAX_RECONNECT_MS)
@@ -534,7 +590,9 @@ export function createBridge(ctx, options = {}) {
   }
 
   function start() {
+    enabled = true
     if (started) return
+    lastError = null
     started = true
     stopped = false
     refreshSessions()
@@ -542,8 +600,10 @@ export function createBridge(ctx, options = {}) {
   }
 
   function stop() {
+    enabled = false
     stopped = true
     started = false
+    connected = false
     if (retryTimer !== null) {
       clearTimeout(retryTimer)
       retryTimer = null
@@ -749,8 +809,14 @@ export function createBridge(ctx, options = {}) {
     snapshotSessions,
     directoryEntries,
     sessionIds,
+    getStatus: status,
+    setEnabled,
+    openPet,
+    isEnabled() { return enabled },
     get knownSessions() { return knownSessions },
     get liveSessionIds() { return [...liveIds] },
+    get enabled() { return enabled },
+    get status() { return status() },
     get connected() { return connected },
     get socket() { return socket },
     get url() { return url },
@@ -760,13 +826,97 @@ export function createBridge(ctx, options = {}) {
 
 export function apply(ctx, options = {}) {
   const bridge = createBridge(ctx, options)
+  let httpRegistered = false
+  let httpDisposer = undefined
+
+  function webServer() {
+    if (ctx && typeof ctx.get === 'function') {
+      try {
+        const value = ctx.get('webServer')
+        if (value !== undefined) return value
+      } catch {
+        // fall through to ctx.webServer
+      }
+    }
+    return ctx && typeof ctx === 'object' ? ctx.webServer : undefined
+  }
+
+  function sendJson(res, statusCode, payload) {
+    if (!res || typeof res.writeHead !== 'function') return
+    const body = JSON.stringify(payload)
+    try {
+      res.writeHead(statusCode, {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+      })
+      res.end(body)
+    } catch {
+      // response may already be closed; ignore
+    }
+  }
+
+  async function readJsonBody(req) {
+    if (!req || typeof req.on !== 'function') return {}
+    return await new Promise((resolve) => {
+      let body = ''
+      req.on('data', (chunk) => { body += chunk })
+      req.on('end', () => {
+        if (body === '') return resolve({})
+        try {
+          resolve(JSON.parse(body))
+        } catch {
+          resolve({})
+        }
+      })
+      req.on('error', () => resolve({}))
+    })
+  }
+
+  function registerHttp() {
+    if (httpRegistered) return httpDisposer
+    const server = webServer()
+    if (!server || typeof server.register !== 'function') return undefined
+    httpRegistered = true
+    httpDisposer = server.register({
+      kind: 'prefix',
+      path: '/pet',
+      handler: async (req, res) => {
+        let pathname = ''
+        try {
+          pathname = new URL(req.url ?? '/', 'http://dsh.internal').pathname
+        } catch {
+          sendJson(res, 400, { ok: false, error: '非法请求路径' })
+          return
+        }
+        if (pathname === '/pet/bridge/status' && (req.method === 'GET' || req.method === 'HEAD')) {
+          sendJson(res, 200, { ok: true, ...bridge.getStatus() })
+          return
+        }
+        if (pathname === '/pet/bridge/enabled' && req.method === 'POST') {
+          const body = await readJsonBody(req)
+          const next = typeof body.enabled === 'boolean' ? body.enabled : !bridge.isEnabled()
+          const status = bridge.setEnabled(next)
+          sendJson(res, 200, { ok: true, ...status })
+          return
+        }
+        if (pathname === '/pet/bridge/open' && (req.method === 'POST' || req.method === 'GET')) {
+          sendJson(res, 200, { ok: true, ...bridge.openPet() })
+          return
+        }
+        sendJson(res, 404, { ok: false, error: '未知桥接设置接口' })
+      },
+    })
+  }
+
   if (ctx && typeof ctx.effect === 'function') {
+    ctx.effect(() => registerHttp(), 'dsh-pet: settings HTTP routes')
     ctx.effect(() => {
-      bridge.start()
+      if (bridge.isEnabled()) bridge.start()
       return () => bridge.stop()
     }, 'dsh-pet: bridge websocket client')
   }
-  bridge.start()
+  registerHttp()
+  if (bridge.isEnabled()) bridge.start()
   return bridge
 }
 

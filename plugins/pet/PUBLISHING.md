@@ -4,14 +4,17 @@
 
 - npm 包名：`@yshark/dsh-codex-pet`
 - 插件入口：`lib/index.mjs`
+- 设置页客户端 bundle：`lib/client.js`
 - 组合包 patch：`cordis.patch.yml`
 - 运行依赖：`@yshark/pet-protocol`、`ws`
-- 只发布桥接插件，不包含浏览器客户端 bundle 或宠物库代码。
+- peer dependency：`react`（供 DSH Web 客户端 bundle 使用）
+- 只发布桥接插件 + 极简设置页客户端；不包含宠物 overlay、宠物库 RPC、宠物库代码或渲染代码。
 
 ## 2. 本地安装（开发/调试）
 
 ```sh
 cd /path/to/dsh-pet-plugin/plugins/pet
+npm run build
 npm test
 ```
 
@@ -26,6 +29,7 @@ dsh web
 
 ```sh
 cd plugins/pet
+npm run build
 npm test
 npm pack --dry-run
 ```
@@ -33,10 +37,13 @@ npm pack --dry-run
 `npm pack --dry-run` 应包含：
 
 - `lib/index.mjs`
+- `lib/client.js`
 - `cordis.patch.yml`
 - `package.json`
 - `README.md`
 - `PUBLISHING.md`
+
+这些文件即 npm 包的全部发布内容；`src/`、`scripts/`、旧宠物库/RPC/overlay 代码不应出现。
 
 ## 4. 发布到 npm
 
@@ -57,6 +64,7 @@ npm publish
 
 ## 6. 注意事项
 
-- 包名 `@yshark/dsh-codex-pet` 会作为插件 id。
+- 包名 `@yshark/dsh-codex-pet` 会作为插件 id 和客户端路由。
 - 桥接插件只做 DSH → 桌宠线协议翻译；宠物状态机、渲染和宠物库都在桌宠侧。
 - 桌宠地址默认为 `ws://127.0.0.1:3720/v1`，可通过 `DSH_PET_URL` 覆盖。
+- 设置页客户端通过 `dsh.client` 声明由 DSH Web 自动加载，无需用户手动引入。
