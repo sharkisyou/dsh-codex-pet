@@ -139,6 +139,27 @@ test('settings update persists and broadcasts to all UI clients', async () => {
   }
 })
 
+test('settings update persists pet-window position through the UI gateway', async () => {
+  const h = await createHarness()
+  try {
+    const ui = new FakeSocket()
+    h.gateway.handleConnection(ui)
+    ui.emit('message', JSON.stringify({ kind: 'settings/update', patch: { windowX: 321, windowY: 654 } }))
+    await new Promise((r) => setTimeout(r, 30))
+    const settings = findMessage<any>(ui, 'settings')
+    assert.ok(settings)
+    assert.equal(settings.settings.windowX, 321)
+    assert.equal(settings.settings.windowY, 654)
+    const saved = await h.store.load()
+    assert.equal(saved.windowX, 321)
+    assert.equal(saved.windowY, 654)
+  } finally {
+    h.gateway.stop()
+    await rm(h.libraryRoot, { recursive: true, force: true })
+    await rm(h.dataDir, { recursive: true, force: true })
+  }
+})
+
 test('rejects selecting a pet that is not in the library', async () => {
   const h = await createHarness()
   try {

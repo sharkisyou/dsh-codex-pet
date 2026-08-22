@@ -73,6 +73,33 @@ test('sanitizes invalid persisted values', () => {
   assert.equal(nonNumber.zoom, DEFAULT_SETTINGS.zoom)
 })
 
+test('persists pet-window position', async () => {
+  const dir = await makeTempDir()
+  try {
+    const store = createSettingsStore({ dataDir: dir })
+    const updated = await store.update({ windowX: 1234, windowY: 567 })
+    assert.equal(updated.windowX, 1234)
+    assert.equal(updated.windowY, 567)
+
+    const reloaded = createSettingsStore({ dataDir: dir })
+    const loaded = await reloaded.load()
+    assert.equal(loaded.windowX, 1234)
+    assert.equal(loaded.windowY, 567)
+
+    const raw = JSON.parse(await readFile(join(dir, 'settings.json'), 'utf8'))
+    assert.equal(raw.windowX, 1234)
+    assert.equal(raw.windowY, 567)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('sanitizes invalid persisted positions to null', () => {
+  const sanitized = sanitizeSettings({ windowX: 'left', windowY: Number.NaN })
+  assert.equal(sanitized.windowX, null)
+  assert.equal(sanitized.windowY, null)
+})
+
 test('resolveAppDataDir uses platform conventions and env override', () => {
   const originalDir = process.env.DSH_PET_DATA_DIR
   const originalXdg = process.env.XDG_DATA_HOME

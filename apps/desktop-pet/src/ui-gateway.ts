@@ -138,6 +138,10 @@ export function createUiGateway(options: UiGatewayOptions): UiGateway {
           ...(typeof patch.selectedPetId === 'string' || patch.selectedPetId === null ? { selectedPetId: patch.selectedPetId } : {}),
           ...(typeof patch.zoom === 'number' ? { zoom: patch.zoom } : {}),
           ...(typeof patch.awake === 'boolean' ? { awake: patch.awake } : {}),
+          ...(typeof patch.windowX === 'number' && Number.isFinite(patch.windowX) ? { windowX: Math.round(patch.windowX) } : {}),
+          ...(typeof patch.windowY === 'number' && Number.isFinite(patch.windowY) ? { windowY: Math.round(patch.windowY) } : {}),
+          ...(typeof patch.x === 'number' && Number.isFinite(patch.x) ? { windowX: Math.round(patch.x) } : {}),
+          ...(typeof patch.y === 'number' && Number.isFinite(patch.y) ? { windowY: Math.round(patch.y) } : {}),
         })
         if (!result.ok) {
           send(socket, { kind: 'error', message: result.error })

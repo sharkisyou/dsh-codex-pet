@@ -11,6 +11,11 @@ body,
   height: 100%;
 }
 
+body.pet-window,
+body.pet-window #app {
+  background: transparent;
+}
+
 #app {
   display: grid;
   place-items: center;
@@ -46,6 +51,16 @@ body,
   image-rendering: pixelated;
   width: 240px;
   height: 240px;
+  cursor: pointer;
+}
+
+.pet-stage {
+  cursor: grab;
+  user-select: none;
+}
+
+.pet-stage:active {
+  cursor: grabbing;
 }
 
 .pet-status {

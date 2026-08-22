@@ -8,6 +8,7 @@
  */
 
 import {
+  cycleNext,
   frameIndex,
   type ParsedPet,
   type PetAnimationState,
@@ -40,6 +41,13 @@ export const BUBBLE_TEXT: Readonly<Record<string, string>> = Object.freeze({
 
 export function animationNameForState(state: string): string {
   return STATE_ANIMATION[state] ?? 'idle'
+}
+
+export function nextClickSkill(
+  current: string | null | undefined,
+  list: readonly string[] | null | undefined,
+): string | null {
+  return cycleNext(current, list)
 }
 
 export function bubbleText(
@@ -92,6 +100,18 @@ export interface PetRenderer {
   setImage(image: HTMLImageElement | null): void
   setState(state: string): void
   setBubble(key: string | null, params?: Record<string, unknown> | null): void
+  /** Temporarily play a named animation from the pet package (e.g. a click skill). */
+  playAnimation(name: string): void
+  /** Advance to the next package-declared click animation and play it. */
+  playNextClickSkill(): string | null
+  /** Alias for {@link PetRenderer.playNextClickSkill}. */
+  playClickSkill(): string | null
+  /** Alias for {@link PetRenderer.playNextClickSkill}. */
+  playClickAnimation(): string | null
+  /** Alias for {@link PetRenderer.playNextClickSkill}. */
+  triggerClickSkill(): string | null
+  /** The currently active override animation, if any. */
+  getClickAnimation(): string | null
   start(): void
   stop(): void
   render(now?: number): void
@@ -111,6 +131,8 @@ interface RendererState {
   bubbleParams: Record<string, unknown> | null
   animationName: string
   animationStartedAt: number
+  overrideAnimation: string | null
+  lastClickSkill: string | null
 }
 
 function fallbackDraw(ctx: CanvasRenderingContext2D, width: number, height: number, state: string, color: string): void {
@@ -152,6 +174,8 @@ export function createPetRenderer(
     bubbleParams: null,
     animationName: 'idle',
     animationStartedAt: 0,
+    overrideAnimation: null,
+    lastClickSkill: null,
   }
 
   let raf = 0
@@ -160,7 +184,10 @@ export function createPetRenderer(
 
   function setPet(pet: ParsedPet | null): void {
     state.pet = pet
+    state.overrideAnimation = null
+    state.lastClickSkill = null
     state.animationStartedAt = performance.now()
+    state.animationName = animationNameForState(state.state)
   }
 
   function setImage(image: HTMLImageElement | null): void {
@@ -185,8 +212,9 @@ export function createPetRenderer(
   }
 
   function setState(next: string): void {
-    if (state.state === next) return
+    if (state.state === next && state.overrideAnimation === null) return
     state.state = next
+    state.overrideAnimation = null
     state.animationName = animationNameForState(next)
     state.animationStartedAt = performance.now()
   }
@@ -197,9 +225,34 @@ export function createPetRenderer(
   }
 
   function currentAnimationName(): string {
+    if (state.overrideAnimation !== null && state.pet !== null && state.pet.states[state.overrideAnimation] !== undefined) {
+      return state.overrideAnimation
+    }
     const base = animationNameForState(state.state)
     if (state.pet !== null && state.pet.states[base] !== undefined) return base
     return state.pet !== null && state.pet.states.idle !== undefined ? 'idle' : 'idle'
+  }
+
+  function playAnimation(name: string): void {
+    if (state.pet === null || state.pet.states[name] === undefined) return
+    state.overrideAnimation = name
+    state.animationName = name
+    state.animationStartedAt = performance.now()
+  }
+
+  function playNextClickSkill(): string | null {
+    if (state.pet === null) return null
+    const list = state.pet.clickAnimations ?? []
+    const next = nextClickSkill(state.lastClickSkill, list)
+    if (next !== null) {
+      state.lastClickSkill = next
+      playAnimation(next)
+    }
+    return next
+  }
+
+  function getClickAnimation(): string | null {
+    return state.overrideAnimation
   }
 
   function render(now?: number): void {
@@ -232,7 +285,13 @@ export function createPetRenderer(
       return
     }
 
-    const frame = frameIndex(anim, elapsed).frame
+    const frameResult = frameIndex(anim, elapsed)
+    const frame = frameResult.frame
+    if (state.overrideAnimation !== null && frameResult.finished) {
+      state.overrideAnimation = null
+      state.animationName = animationNameForState(state.state)
+      state.animationStartedAt = now ?? performance.now()
+    }
     const columns = options.columns ?? 8
     const rows = options.atlasRows ?? Math.max(
       1,
@@ -334,6 +393,12 @@ export function createPetRenderer(
     setImage,
     setState,
     setBubble,
+    playAnimation,
+    playNextClickSkill,
+    playClickSkill: playNextClickSkill,
+    playClickAnimation: playNextClickSkill,
+    triggerClickSkill: playNextClickSkill,
+    getClickAnimation,
     start,
     stop,
     render,

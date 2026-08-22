@@ -15,12 +15,18 @@ export interface PetSettings {
   zoom: number
   /** Wake = the pet is visible and follows session state. */
   awake: boolean
+  /** Last pet-window outer X position (physical pixels), or null to use default. */
+  windowX?: number | null
+  /** Last pet-window outer Y position (physical pixels), or null to use default. */
+  windowY?: number | null
 }
 
 export const DEFAULT_SETTINGS: PetSettings = Object.freeze({
   selectedPetId: null,
   zoom: 1,
   awake: true,
+  windowX: null,
+  windowY: null,
 })
 
 export const ZOOM_MIN = 0.4
@@ -68,10 +74,20 @@ export function sanitizeSettings(input: unknown): PetSettings {
   const selectedPetId = typeof record.selectedPetId === 'string' && record.selectedPetId !== ''
     ? record.selectedPetId
     : null
+  const rawWindowX = record.windowX ?? record.x
+  const rawWindowY = record.windowY ?? record.y
+  const windowX = typeof rawWindowX === 'number' && Number.isFinite(rawWindowX)
+    ? Math.round(rawWindowX)
+    : null
+  const windowY = typeof rawWindowY === 'number' && Number.isFinite(rawWindowY)
+    ? Math.round(rawWindowY)
+    : null
   return {
     selectedPetId,
     zoom: clampZoom(record.zoom),
     awake: typeof record.awake === 'boolean' ? record.awake : DEFAULT_SETTINGS.awake,
+    windowX,
+    windowY,
   }
 }
 

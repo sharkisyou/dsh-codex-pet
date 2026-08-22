@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   animationNameForState,
   bubbleText,
+  nextClickSkill,
 } from '../src/renderer'
 
 test('maps display states to pet animation rows', () => {
@@ -14,6 +15,13 @@ test('maps display states to pet animation rows', () => {
   assert.equal(animationNameForState('blocked'), 'failed')
   assert.equal(animationNameForState('failed'), 'failed')
   assert.equal(animationNameForState('ready'), 'review')
+})
+
+test('cycles click skills in package order', () => {
+  assert.equal(nextClickSkill(null, ['amaterasu', 'kirin']), 'amaterasu')
+  assert.equal(nextClickSkill('amaterasu', ['amaterasu', 'kirin']), 'kirin')
+  assert.equal(nextClickSkill('kirin', ['amaterasu', 'kirin']), 'amaterasu')
+  assert.equal(nextClickSkill(null, []), null)
 })
 
 test('renders human-readable bubbles', () => {

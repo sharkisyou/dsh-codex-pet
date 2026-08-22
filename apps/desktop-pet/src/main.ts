@@ -3,6 +3,8 @@ import { detectWindowKind } from './window-kind.js'
 import { createPetRenderer } from './renderer.js'
 import { createUiClient, type UiClient } from './ui-client.js'
 import { mountSettingsApp } from './settings-app.js'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi'
 import type { AppStateSnapshot, ActivitySnapshot, TrayItemSnapshot } from './controller.js'
 import type { ParsedPet } from '@yshark/pet-core'
 
@@ -16,6 +18,15 @@ if (label) {
 }
 
 document.title = kind === 'settings' ? 'Pet Settings' : 'Desktop Pet'
+document.body.classList.add(kind === 'settings' ? 'settings-window' : 'pet-window')
+
+function isTauri(): boolean {
+  return typeof window !== 'undefined' && Boolean((window as any).__TAURI_INTERNALS__)
+}
+
+function currentTauriWindow(): ReturnType<typeof getCurrentWindow> | null {
+  return isTauri() ? getCurrentWindow() : null
+}
 
 if (kind === 'pet') {
   const content = document.querySelector<HTMLElement>('#window-content')
@@ -46,6 +57,8 @@ if (kind === 'pet') {
       let awake = true
       let trayItems: TrayItemSnapshot[] = []
       let trayOpen = false
+      let positionRestored = false
+      let positionSaveTimer: ReturnType<typeof setTimeout> | null = null
 
       function trayStateLabel(state: string): string {
         switch (state) {
@@ -114,11 +127,84 @@ if (kind === 'pet') {
         })
       }
 
+      function saveWindowPosition(x: number, y: number): void {
+        if (positionSaveTimer !== null) clearTimeout(positionSaveTimer)
+        positionSaveTimer = setTimeout(() => {
+          positionSaveTimer = null
+          client.updateSettings({ windowX: x, windowY: y })
+        }, 300)
+      }
+
+      async function attachPositionPersistence(): Promise<void> {
+        const win = currentTauriWindow()
+        if (!win) return
+        try {
+          await win.onMoved(({ payload }) => {
+            if (!positionRestored) return
+            saveWindowPosition(payload.x, payload.y)
+          })
+        } catch {
+          // Tauri window events are unavailable outside a Tauri webview.
+        }
+      }
+
+      let pressOnCanvas = false
+      let pointerDownAt: { x: number; y: number } | null = null
+      let dragStarted = false
+      const DRAG_THRESHOLD_PX = 5
+
+      if (stage) {
+        stage.addEventListener('pointerdown', (event) => {
+          if (event.button !== 0) return
+          pressOnCanvas = event.target === canvas
+          pointerDownAt = { x: event.clientX, y: event.clientY }
+          dragStarted = false
+          if (typeof stage.setPointerCapture === 'function') {
+            try { stage.setPointerCapture(event.pointerId) } catch { /* ignore */ }
+          }
+        })
+        stage.addEventListener('pointermove', (event) => {
+          if (pointerDownAt === null || dragStarted) return
+          const dx = event.clientX - pointerDownAt.x
+          const dy = event.clientY - pointerDownAt.y
+          if (Math.hypot(dx, dy) >= DRAG_THRESHOLD_PX) {
+            dragStarted = true
+            const win = currentTauriWindow()
+            if (win) {
+              void win.startDragging().catch(() => { /* browser dev / unsupported */ })
+            }
+          }
+        })
+        stage.addEventListener('pointerup', () => {
+          const shouldClick = !dragStarted && pressOnCanvas
+          pointerDownAt = null
+          dragStarted = false
+          pressOnCanvas = false
+          if (shouldClick) {
+            renderer.playNextClickSkill()
+          }
+        })
+        stage.addEventListener('pointercancel', () => {
+          pointerDownAt = null
+          dragStarted = false
+          pressOnCanvas = false
+        })
+      }
+
       function applyZoom(): void {
         if (!canvas) return
         const size = Math.round(240 * zoom)
         canvas.style.width = `${size}px`
         canvas.style.height = `${size}px`
+        const win = currentTauriWindow()
+        if (win) {
+          // Keep the transparent pet window sized to the scaled canvas plus
+          // room for the status line so larger zoom values are actually visible.
+          const windowSize = Math.max(160, size + 32)
+          void win.setSize(new LogicalSize(windowSize, windowSize + 20)).catch(() => {
+            // Ignore in browser dev or when the platform rejects the resize.
+          })
+        }
       }
 
       function applyAwake(): void {
@@ -140,6 +226,17 @@ if (kind === 'pet') {
         awake = settings.awake
         applyZoom()
         applyAwake()
+        if (!positionRestored) {
+          positionRestored = true
+          if (settings.windowX != null && settings.windowY != null) {
+            const win = currentTauriWindow()
+            if (win) {
+              void win.setPosition(new PhysicalPosition(settings.windowX, settings.windowY)).catch(() => {
+                // Ignore restore failures (e.g. position no longer valid).
+              })
+            }
+          }
+        }
       }
 
       function applyActivity(activity: ActivitySnapshot): void {
@@ -185,6 +282,8 @@ if (kind === 'pet') {
           },
         },
       })
+
+      void attachPositionPersistence()
 
       // Expose for debugging / tests.
       ;(window as any).__desktopPet = { client, renderer, applyState }
