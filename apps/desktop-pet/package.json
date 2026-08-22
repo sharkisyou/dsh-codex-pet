@@ -5,16 +5,25 @@
   "description": "Tauri 2 + Vite + native TypeScript desktop pet shell.",
   "type": "module",
   "scripts": {
+    "predev": "npm run build --workspace @yshark/pet-core && npm run build --workspace @yshark/pet-protocol",
     "dev": "vite",
+    "prebuild": "npm run build --workspace @yshark/pet-core && npm run build --workspace @yshark/pet-protocol",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "pretest": "npm run build --workspace @yshark/pet-core && npm run build --workspace @yshark/pet-protocol",
     "test": "tsx --test test/*.test.ts",
+    "pretypecheck": "npm run build --workspace @yshark/pet-core && npm run build --workspace @yshark/pet-protocol",
     "typecheck": "tsc --noEmit",
+    "preserver": "npm run build --workspace @yshark/pet-core && npm run build --workspace @yshark/pet-protocol",
+    "server": "tsx src/server-entry.ts",
     "clean": "rm -rf dist dist-ts"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0"
+    "@tauri-apps/api": "^2.0.0",
+    "@yshark/pet-core": "0.1.0",
+    "@yshark/pet-protocol": "0.1.0",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",

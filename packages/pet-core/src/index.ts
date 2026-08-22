@@ -101,6 +101,8 @@ export type {
   SessionStoreActivity,
   SessionStoreEvent,
   SessionStoreOptions,
+  SnapshotSessionInput,
+  SnapshotSessionOutput,
 } from './session-store.js'
 
 // Animation.

@@ -116,7 +116,6 @@ export function isTopLevelSession(entry: unknown): boolean {
 
 function currentMatches(
   current: MergeSessionOptions['currentSession'],
-  agent: string | null,
   sessionId: string,
   key: string,
 ): boolean {
@@ -217,7 +216,7 @@ export function mergeSession(options: MergeSessionOptions): MergedSession {
   }
 
   const active = state !== 'idle'
-  const reminder = !(isBlockingState(state) && acknowledged && !currentMatches(options.currentSession, agent, sessionId, key))
+  const reminder = !(isBlockingState(state) && acknowledged && !currentMatches(options.currentSession, sessionId, key))
 
   return {
     agent,
@@ -326,7 +325,7 @@ function buildItems(
         : typeof obj.title === 'string' && obj.title !== ''
           ? obj.title
           : id
-      const current = currentMatches(currentSession, agent, id, key)
+      const current = currentMatches(currentSession, id, key)
       items.push({ ...merged, title, current })
     }
   }

@@ -15,6 +15,7 @@ import {
 } from './state-machine.js'
 import { createSessionKey, parseSessionKey, type SessionRef } from './session.js'
 import { toActivityState } from './activity.js'
+import { statusKeyFor } from './multi-session.js'
 import type { PendingKind, PetActivityState } from './types.js'
 
 export interface SessionStoreEvent {
@@ -55,6 +56,24 @@ export interface SessionStoreOptions {
   stateStyle?: 'legacy' | 'protocol'
 }
 
+export interface SnapshotSessionInput {
+  sessionId: string
+  title?: string
+  state?: string
+  pendingKind?: PendingKind | string
+  lastEventAt?: number
+  acknowledged?: boolean
+}
+
+export interface SnapshotSessionOutput {
+  sessionId: string
+  title?: string
+  state: string
+  pendingKind: PendingKind | null
+  lastEventAt: number
+  acknowledged: boolean
+}
+
 export interface PetSessionTracker {
   handle(event: SessionStoreEvent): PetStateMachineResult | null
   apply(event: SessionStoreEvent): PetStateMachineResult | null
@@ -68,6 +87,17 @@ export interface PetSessionTracker {
   get(agent: string, sessionId: string): SessionStoreActivity | null
   remove(agent: string, sessionId: string): void
   clear(): void
+  applySnapshot(agent: string, sessions: readonly SnapshotSessionInput[]): void
+  exportSnapshot(agent: string): SnapshotSessionOutput[]
+}
+
+interface SnapshotOverride {
+  state: string
+  pendingKind: PendingKind | null
+  lastEventAt: number
+  acknowledged: boolean
+  bubbleKey: string | null
+  bubbleParams: Record<string, unknown> | null
 }
 
 function identityOf(event: SessionStoreEvent): { agent: string | null; sessionId: string; key: string } {
@@ -91,6 +121,7 @@ export function createPetSessionStore(options: SessionStoreOptions = {}): PetSes
   const approvalCounts = new Map<string, number>()
   const acknowledged = new Set<string>()
   const titles = new Map<string, string>()
+  const snapshotOverrides = new Map<string, SnapshotOverride>()
 
   const stateStyle = options.stateStyle ?? 'protocol'
 
@@ -150,6 +181,29 @@ export function createPetSessionStore(options: SessionStoreOptions = {}): PetSes
   function makeActivity(agent: string | null, sessionId: string, key: string): SessionStoreActivity | null {
     const machine = machines.get(key)
     if (machine === undefined) return null
+    const override = snapshotOverrides.get(key)
+    if (override !== undefined) {
+      const state = override.state
+      const activityState = toActivityState(state)
+      const active = state !== 'idle'
+      const keyed = statusKeyFor(state, override.bubbleKey, override.bubbleParams, override.pendingKind)
+      const currentAck = acknowledged.has(key)
+      return {
+        agent,
+        sessionId,
+        key,
+        state,
+        activityState,
+        bubbleKey: keyed.bubbleKey,
+        bubbleParams: keyed.bubbleParams,
+        pendingKind: override.pendingKind,
+        lastEventAt: override.lastEventAt,
+        acknowledged: currentAck,
+        active,
+        reminder: !((state === 'failed' || state === 'blocked') && currentAck),
+        title: titles.get(key),
+      }
+    }
     const ts = Date.now()
     const result = machine.apply({ kind: 'tick', ts })
     const pendingKind = pendingKinds.get(key) ?? null
@@ -174,6 +228,62 @@ export function createPetSessionStore(options: SessionStoreOptions = {}): PetSes
     }
   }
 
+  function applySnapshot(agent: string, sessions: readonly SnapshotSessionInput[]): void {
+    if (typeof agent !== 'string' || agent === '' || !Array.isArray(sessions)) return
+    for (const entry of sessions) {
+      if (entry === null || typeof entry !== 'object') continue
+      const sid = typeof entry.sessionId === 'string' && entry.sessionId !== ''
+        ? entry.sessionId
+        : null
+      if (sid === null) continue
+      const key = createSessionKey(agent, sid)
+      machineFor(agent, sid, key)
+      const state = typeof entry.state === 'string' && entry.state !== '' ? entry.state : 'idle'
+      const pendingKind = typeof entry.pendingKind === 'string' && entry.pendingKind !== ''
+        ? entry.pendingKind as PendingKind
+        : null
+      const lastEventAt = typeof entry.lastEventAt === 'number' && entry.lastEventAt > 0 ? entry.lastEventAt : 0
+      const ack = entry.acknowledged === true
+      snapshotOverrides.set(key, {
+        state,
+        pendingKind,
+        lastEventAt,
+        acknowledged: ack,
+        bubbleKey: null,
+        bubbleParams: null,
+      })
+      if (typeof entry.title === 'string' && entry.title !== '') {
+        titles.set(key, entry.title)
+      }
+      if (typeof entry.acknowledged === 'boolean') {
+        if (ack) acknowledged.add(key)
+        else acknowledged.delete(key)
+      }
+    }
+  }
+
+  function exportSnapshot(agent: string): SnapshotSessionOutput[] {
+    const output: SnapshotSessionOutput[] = []
+    const prefix = `${agent}:`
+    for (const key of machines.keys()) {
+      if (!key.startsWith(prefix)) continue
+      const sid = key.slice(prefix.length)
+      if (sid === '') continue
+      const activity = makeActivity(agent, sid, key)
+      if (activity === null) continue
+      output.push({
+        sessionId: sid,
+        title: activity.title,
+        state: activity.state,
+        pendingKind: activity.pendingKind,
+        lastEventAt: activity.lastEventAt,
+        acknowledged: activity.acknowledged,
+      })
+    }
+    output.sort((a, b) => a.sessionId.localeCompare(b.sessionId))
+    return output
+  }
+
   function handle(event: SessionStoreEvent): PetStateMachineResult | null {
     const { agent, sessionId, key } = identityOf(event)
     const ts = typeof event.ts === 'number' ? event.ts : Date.now()
@@ -196,21 +306,16 @@ export function createPetSessionStore(options: SessionStoreOptions = {}): PetSes
       return null
     }
     if (kind === 'snapshot') {
-      // A snapshot is primarily a replay hint; the title directory can be
-      // refreshed here, while live state comes from subsequent wire events.
       if (agent !== null && Array.isArray(event.sessions)) {
-        for (const entry of event.sessions) {
-          if (entry === null || typeof entry !== 'object') continue
-          const sid = typeof entry.sessionId === 'string' && entry.sessionId !== '' ? entry.sessionId : null
-          const title = typeof entry.title === 'string' ? entry.title : undefined
-          if (sid !== null && title !== undefined) titles.set(createSessionKey(agent, sid), title)
-        }
+        applySnapshot(agent, event.sessions as unknown as SnapshotSessionInput[])
       }
       return null
     }
     if (sessionId === '') return null
     const machineEvent = toMachineEvent(event, ts)
     if (machineEvent === null) return null
+    // Live events supersede a replayed snapshot for this session.
+    snapshotOverrides.delete(key)
     // Any real activity makes a previously acknowledged blocked session active again.
     acknowledged.delete(key)
     if (kind === 'approval/start') {
@@ -246,13 +351,14 @@ export function createPetSessionStore(options: SessionStoreOptions = {}): PetSes
         approvalCounts.delete(key)
         acknowledged.delete(key)
         titles.delete(key)
+        snapshotOverrides.delete(key)
       }
     }
   }
 
   function activities(): SessionStoreActivity[] {
     const list: SessionStoreActivity[] = []
-    for (const [key, machine] of machines) {
+    for (const [key] of machines) {
       const ref = (() => {
         const parsed = key.includes(':') ? key.split(/:(.*)/s) : null
         if (parsed && parsed.length >= 2) return { agent: parsed[0], sessionId: parsed[1] }
@@ -299,6 +405,7 @@ export function createPetSessionStore(options: SessionStoreOptions = {}): PetSes
       approvalCounts.delete(key)
       acknowledged.delete(key)
       titles.delete(key)
+      snapshotOverrides.delete(key)
     },
     clear() {
       machines.clear()
@@ -307,7 +414,10 @@ export function createPetSessionStore(options: SessionStoreOptions = {}): PetSes
       approvalCounts.clear()
       acknowledged.clear()
       titles.clear()
+      snapshotOverrides.clear()
     },
+    applySnapshot,
+    exportSnapshot,
   }
   // Make the class-style alias work with `instanceof` as well.
   Object.setPrototypeOf(tracker, createPetSessionStore.prototype)
