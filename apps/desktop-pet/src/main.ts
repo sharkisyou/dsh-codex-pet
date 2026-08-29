@@ -9,7 +9,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi'
 import type { AppStateSnapshot, ActivitySnapshot, TrayItemSnapshot } from './controller.js'
-import { parsePetJson, type ParsedPet } from '@yshark/pet-core'
+import { type ParsedPet } from '@yshark/pet-core'
 
 const kind = detectWindowKind(window.location.search)
 const appEl = document.querySelector<HTMLElement>('#app')
@@ -40,29 +40,7 @@ if (kind === 'pet') {
     renderer.setState('idle')
     renderer.start()
 
-    // 浏览器预览（无 Tauri 桥接）时加载内置演示宠物，便于直接查看 DOM 渲染效果。
-    if (!isTauri()) void loadBrowserDemoPet()
-
-    let browserDemoPet = false
-
-    async function loadBrowserDemoPet(): Promise<void> {
-      try {
-        const response = await fetch('/pets/hachiroku/pet.json')
-        if (!response.ok) return
-        const parsed = parsePetJson(await response.text(), 9)
-        if (!parsed.ok) return
-        renderer.setPet(parsed.pet)
-        renderer.setSprite('/pets/hachiroku/spritesheet.webp')
-        browserDemoPet = true
-        if (status) status.textContent = '浏览器预览 · 演示宠物'
-      } catch {
-        // 演示宠物加载失败时保持占位框。
-      }
-    }
-
-    // 浏览器预览下，桥接重连提示不应覆盖演示宠物文案。
     function updateStatus(text: string): void {
-      if (browserDemoPet) return
       if (status) status.textContent = text
     }
 
@@ -343,11 +321,7 @@ if (kind === 'pet') {
           if (id === selectedPetId) {
             renderer.setPet(pet as ParsedPet)
             renderer.setSprite(spriteDataUrl)
-            // 已连上服务并显示真实宠物：退出"演示宠物"文案。
-            if (browserDemoPet) {
-              browserDemoPet = false
-              if (status) status.textContent = '浏览器预览 · 已连接'
-            }
+            if (status) status.textContent = '浏览器预览 · 已连接'
           }
         },
         onError(message) {
