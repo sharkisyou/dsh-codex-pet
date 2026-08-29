@@ -35,11 +35,16 @@ window.__ModuleLoader__.load({
     }
 
     async function rpc(method, body) {
-      const res = await fetch(`${RPC_PREFIX}/${method}`, {
+      const base = typeof window !== 'undefined' && window.location && window.location.origin
+        ? window.location.origin
+        : ''
+      const res = await globalThis.fetch(`${base}${RPC_PREFIX}/${method}`, {
         method: method === 'status' ? 'GET' : 'POST',
         headers: { 'content-type': 'application/json' },
+        cache: 'no-store',
         body: method === 'status' ? undefined : JSON.stringify(body || {}),
       })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
       return res.json()
     }
 

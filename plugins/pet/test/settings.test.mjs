@@ -32,7 +32,6 @@ class FakeWebSocket {
 
 function makeCtx({ webServer } = {}) {
   return {
-    WebSocket: FakeWebSocket,
     logger: { info() {} },
     effect(fn) {
       return fn()
@@ -45,7 +44,7 @@ function makeCtx({ webServer } = {}) {
 
 test('disabled bridge does not connect until enabled', () => {
   FakeWebSocket.reset()
-  const bridge = createBridge(makeCtx(), { enabled: false })
+  const bridge = createBridge(makeCtx(), { enabled: false, WebSocket: FakeWebSocket })
   assert.equal(bridge.isEnabled(), false)
   assert.equal(bridge.getStatus().enabled, false)
   assert.equal(FakeWebSocket.instances.length, 0)
@@ -58,7 +57,7 @@ test('disabled bridge does not connect until enabled', () => {
 
 test('setEnabled(false) stops the socket and setEnabled(true) reconnects', () => {
   FakeWebSocket.reset()
-  const bridge = createBridge(makeCtx(), { enabled: true })
+  const bridge = createBridge(makeCtx(), { enabled: true, WebSocket: FakeWebSocket })
   bridge.start()
   assert.equal(FakeWebSocket.instances.length, 1)
 
@@ -91,7 +90,7 @@ test('apply registers /pet/bridge HTTP status and enabled routes', async () => {
       registered = route
     },
   }
-  const bridge = apply(makeCtx({ webServer }), { enabled: true })
+  const bridge = apply(makeCtx({ webServer }), { enabled: true, WebSocket: FakeWebSocket })
   assert.ok(registered)
   assert.equal(registered.path, '/pet')
   assert.ok(registered.handler)

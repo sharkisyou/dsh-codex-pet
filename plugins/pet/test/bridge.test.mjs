@@ -47,7 +47,6 @@ function createHarness(options = {}) {
     get: () => undefined,
   }
   const ctx = {
-    WebSocket: FakeWebSocket,
     logger: { info() {} },
     on(event, fn) {
       if (!handlers.has(event)) handlers.set(event, [])
@@ -64,7 +63,7 @@ function createHarness(options = {}) {
     sessions: sessionsService,
     ...(options.openSession ? { openSession: options.openSession } : {}),
   }
-  const bridge = apply(ctx, options.bridgeOptions ?? {})
+  const bridge = apply(ctx, { WebSocket: FakeWebSocket, ...(options.bridgeOptions ?? {}) })
   const emit = async (event, ...args) => {
     for (const handler of handlers.get(event) ?? []) {
       await handler(...args)
@@ -200,7 +199,7 @@ test('incoming session/open is forwarded to a host opener when available', async
 
 test('createBridge exposes a send/stop surface and validates outgoing events', () => {
   FakeWebSocket.reset()
-  const bridge = createBridge({ logger: { info() {} }, WebSocket: FakeWebSocket }, { reconnectDelay: 5 })
+  const bridge = createBridge({ logger: { info() {} } }, { reconnectDelay: 5, WebSocket: FakeWebSocket })
   bridge.start()
   const ws = FakeWebSocket.instances[0]
   ws.open()

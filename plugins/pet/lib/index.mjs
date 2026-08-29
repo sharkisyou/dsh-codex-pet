@@ -265,7 +265,7 @@ export function createBridge(ctx, options = {}) {
     if (logger && typeof logger.info === 'function') logger.info(`[pet-bridge] ${msg}`, ...args)
   }
 
-  let WebSocketImpl = options.WebSocket || ctx?.WebSocket || globalThis.WebSocket
+  let WebSocketImpl = options.WebSocket || globalThis.WebSocket
   if (!WebSocketImpl) {
     try {
       WebSocketImpl = require('ws')
@@ -563,7 +563,12 @@ export function createBridge(ctx, options = {}) {
     socket.onerror = (error) => {
       lastError = error instanceof Error ? error.message : String(error ?? 'websocket error')
       log('websocket error', error)
-      if (!connected) scheduleReconnect()
+      if (!connected) {
+        const old = socket
+        socket = null
+        try { old?.close() } catch { /* already closed */ }
+        scheduleReconnect()
+      }
     }
 
     socket.onclose = () => {
@@ -848,6 +853,9 @@ export function apply(ctx, options = {}) {
       res.writeHead(statusCode, {
         'content-type': 'application/json; charset=utf-8',
         'cache-control': 'no-store',
+        'access-control-allow-origin': '*',
+        'access-control-allow-methods': 'GET, POST, OPTIONS',
+        'access-control-allow-headers': 'content-type',
       })
       res.end(body)
     } catch {
@@ -886,6 +894,10 @@ export function apply(ctx, options = {}) {
           pathname = new URL(req.url ?? '/', 'http://dsh.internal').pathname
         } catch {
           sendJson(res, 400, { ok: false, error: '非法请求路径' })
+          return
+        }
+        if (req.method === 'OPTIONS') {
+          sendJson(res, 204, {})
           return
         }
         if (pathname === '/pet/bridge/status' && (req.method === 'GET' || req.method === 'HEAD')) {
