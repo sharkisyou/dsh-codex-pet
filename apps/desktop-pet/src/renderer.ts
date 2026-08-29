@@ -22,6 +22,12 @@ export const STATE_ANIMATION: Readonly<Record<string, string>> = Object.freeze({
   blocked: 'failed',
   failed: 'failed',
   ready: 'review',
+  // 交互态（悬停/移动/挥手）：atlas 中存在对应行时原样透传，
+  // 否则 currentAnimationName 会回落到 idle。
+  jumping: 'jumping',
+  waving: 'waving',
+  'running-left': 'running-left',
+  'running-right': 'running-right',
 })
 
 export const BUBBLE_TEXT: Readonly<Record<string, string>> = Object.freeze({
@@ -92,6 +98,12 @@ export interface PetRendererOptions {
   atlasRows?: number
   /** Number of columns in the atlas. Defaults to 8, the standard pet atlas width. */
   columns?: number
+  /**
+   * Whether the renderer draws the speech bubble onto the canvas. Defaults to
+   * true. Hosts that render a DOM speech bubble on top (e.g. the pet window
+   * shell) should set this to false to avoid a duplicated bubble.
+   */
+  drawBubble?: boolean
 }
 
 export interface PetRenderer {
@@ -144,6 +156,11 @@ function fallbackDraw(ctx: CanvasRenderingContext2D, width: number, height: numb
     failed: '#f94144',
     ready: '#90be6d',
   }
+  ctx.save()
+  ctx.globalCompositeOperation = 'destination-out'
+  ctx.fillStyle = 'rgba(0, 0, 0, 1)'
+  ctx.fillRect(0, 0, width, height)
+  ctx.restore()
   ctx.clearRect(0, 0, width, height)
   ctx.fillStyle = palette[state] ?? color
   const size = Math.min(width, height) * 0.5
@@ -164,6 +181,7 @@ export function createPetRenderer(
   const ctx = typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null
   const frameRate = options.frameRate ?? 0
   const fallbackColor = options.fallbackColor ?? '#8ecae6'
+  const drawBubbleCanvas = options.drawBubble !== false
 
   const state: RendererState = {
     pet: null,
@@ -274,14 +292,14 @@ export function createPetRenderer(
     const spriteHeight = (sprite as any)?.naturalHeight || (sprite as any)?.height || 0
     if (pet === null || sprite === null || sprite.complete === false || spriteWidth === 0 || spriteHeight === 0) {
       fallbackDraw(ctx, width, height, state.state, fallbackColor)
-      drawBubble(ctx, width, height)
+      if (drawBubbleCanvas) drawBubble(ctx, width, height)
       return
     }
 
     const anim: PetAnimationState | undefined = pet.states[animName]
     if (anim === undefined) {
       fallbackDraw(ctx, width, height, state.state, fallbackColor)
-      drawBubble(ctx, width, height)
+      if (drawBubbleCanvas) drawBubble(ctx, width, height)
       return
     }
 
@@ -299,6 +317,13 @@ export function createPetRenderer(
     )
     const cellWidth = spriteWidth / columns
     const cellHeight = spriteHeight / rows
+    // 透明窗口下部分 WebKit 对 clearRect 的透明清除不可靠，先用
+    // destination-out 强制擦除上一帧，避免旧宠物/占位圆残留。
+    ctx.save()
+    ctx.globalCompositeOperation = 'destination-out'
+    ctx.fillStyle = 'rgba(0, 0, 0, 1)'
+    ctx.fillRect(0, 0, width, height)
+    ctx.restore()
     ctx.clearRect(0, 0, width, height)
     ctx.imageSmoothingEnabled = false
     ctx.drawImage(
@@ -312,7 +337,7 @@ export function createPetRenderer(
       width,
       height,
     )
-    drawBubble(ctx, width, height)
+    if (drawBubbleCanvas) drawBubble(ctx, width, height)
   }
 
   function drawBubble(context: CanvasRenderingContext2D, width: number, _height: number): void {

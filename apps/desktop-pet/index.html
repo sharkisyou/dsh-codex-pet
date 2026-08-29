@@ -1,20 +1,33 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Desktop Pet</title>
+    <title>桌宠</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <div id="app">
-      <main id="window-content">
-        <div class="placeholder">
-          <p id="window-label">Pet window</p>
-          <p class="hint">Tauri 2 + Vite + native TypeScript skeleton</p>
+    <main id="app" class="shell">
+      <!-- 桌宠窗口外壳（设置窗口下由 .shell--settings 隐藏） -->
+      <section class="pet-stage" id="pet-stage">
+        <div id="speech-bubble" class="speech-bubble" aria-live="polite"></div>
+        <div id="pet" class="pet" aria-label="桌宠"></div>
+        <p id="pet-status" class="pet-status">连接中…</p>
+        <div class="activity-tray-wrap" id="activity-tray-wrap">
+          <button id="activity-tray-toggle" class="activity-tray-toggle" type="button" hidden>活动</button>
+          <div id="activity-tray" class="activity-tray" hidden></div>
         </div>
-      </main>
-    </div>
+      </section>
+
+      <!-- 右键菜单（桌宠窗口） -->
+      <nav id="pet-context-menu" class="pet-context-menu" aria-label="宠物菜单" hidden>
+        <button id="pet-menu-settings" type="button">设置</button>
+        <button id="pet-menu-hide" type="button">隐藏</button>
+      </nav>
+
+      <!-- 设置窗口内容由 src/settings-app.ts 注入 -->
+      <section id="window-content"></section>
+    </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

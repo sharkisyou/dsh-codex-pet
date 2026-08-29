@@ -17,6 +17,13 @@ test('maps display states to pet animation rows', () => {
   assert.equal(animationNameForState('ready'), 'review')
 })
 
+test('passes interaction states through to their atlas rows', () => {
+  assert.equal(animationNameForState('jumping'), 'jumping')
+  assert.equal(animationNameForState('waving'), 'waving')
+  assert.equal(animationNameForState('running-left'), 'running-left')
+  assert.equal(animationNameForState('running-right'), 'running-right')
+})
+
 test('cycles click skills in package order', () => {
   assert.equal(nextClickSkill(null, ['amaterasu', 'kirin']), 'amaterasu')
   assert.equal(nextClickSkill('amaterasu', ['amaterasu', 'kirin']), 'kirin')
