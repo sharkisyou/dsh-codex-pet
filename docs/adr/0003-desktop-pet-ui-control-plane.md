@@ -43,6 +43,8 @@
 
 设置窗提供外部画廊入口 `https://petdex.dev/zh`。桌宠不负责导入/删除，仅打开入口并在 UI 中注明“安装仍由 Codex 完成”。
 
+> 已扩展：本决策被 [0004-online-pet-market.md](./0004-online-pet-market.md) 取代/扩展——桌宠现已内置在线市场（后端驱动的浏览/安装/缩略图）。
+
 ## 影响
 
 - `apps/desktop-pet/src/server.ts` 真实模式改为共享 HTTP server + path 路由；注入式 fake server 保持原单路径行为。
