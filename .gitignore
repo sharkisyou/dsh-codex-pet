@@ -1,8 +1,17 @@
 node_modules/
 dist/
+dist-widget/
 dist-ts/
 *.tsbuildinfo
 *.log
 .DS_Store
 .vite/
 coverage/
+
+# 本地截图与测试产物（不进版本库）
+shot-*.png
+image*.png
+*.gif
+agent-browser-demo-*.png
+prototype/
+.mcp.json

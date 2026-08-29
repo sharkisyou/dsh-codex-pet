@@ -10,6 +10,7 @@ import { DEFAULT_PORT, PROTOCOL_VERSION } from '@yshark/pet-protocol'
 
 import type { AppStateSnapshot, ActivitySnapshot, TrayItemSnapshot } from './controller.js'
 import type { ParsedPet } from '@yshark/pet-core'
+import type { MarketPet } from './market-types.js'
 
 export const UI_PATH = '/v1/ui'
 
@@ -24,6 +25,11 @@ export interface UiClientHandlers {
   onActivities?(activities: TrayItemSnapshot[]): void
   onTray?(tray: TrayItemSnapshot[]): void
   onAllActivities?(activities: TrayItemSnapshot[]): void
+  onMarketList?(payload: { pets: MarketPet[]; total: number; page: number; pageSize: number; kinds: string[] }): void
+  onMarketInstalled?(info: { id: string; displayName: string; sourceDir: string }): void
+  onMarketUninstalled?(payload: { slug: string }): void
+  onMarketThumb?(payload: { slug: string; dataUrl: string }): void
+  onMarketPet?(payload: { slug: string; pet: ParsedPet | null; spriteDataUrl: string | null }): void
   onError?(message: string): void
   onStatus?(connected: boolean): void
 }
@@ -52,10 +58,28 @@ export interface UiClient {
   openActivity(agent: string, sessionId: string, reason?: string): void
   openTrayItem(agent: string, sessionId: string, reason?: string): void
   trayClick(agent: string, sessionId: string, reason?: string): void
+  /** 请求在线宠物市场列表（petdex，支持分页）。 */
+  requestMarketList(options?: { query?: string; kind?: string; page?: number; pageSize?: number }): void
+  /** 从在线市场安装一只宠物。 */
+  installMarketPet(pet: MarketPet): void
+  /** 卸载本地宠物（删除 ~/.codex/pets/<slug>/）。 */
+  uninstallMarketPet(slug: string): void
+  /** 请求某只市场宠物的缩略图（服务端生成 data URL）。 */
+  requestMarketThumb(pet: MarketPet): void
+  /** 请求某只市场宠物的详情（解析后的 pet + 全 sprite data URL，用于大图预览）。 */
+  requestMarketPet(pet: MarketPet): void
 }
 
 function defaultUiUrl(port: number): string {
-  return `ws://127.0.0.1:${port}${UI_PATH}`
+  // 桌面应用（Tauri）里页面从 localhost/tauri:// 加载 → 连 127.0.0.1；
+  // 浏览器预览通过局域网 IP 打开时，让 WS 连同一台机器的同一主机名，
+  // 这样预览页能直接连上本地 pet 服务（省去手动 ?uiurl= 参数）。
+  const pageHost = typeof location !== 'undefined' ? location.hostname : ''
+  const host =
+    pageHost && pageHost !== 'localhost' && pageHost !== '127.0.0.1'
+      ? pageHost
+      : '127.0.0.1'
+  return `ws://${host}:${port}${UI_PATH}`
 }
 
 export function createUiClient(options: UiClientOptions = {}): UiClient {
@@ -179,6 +203,27 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
       case 'allActivities':
         handlers.onAllActivities?.(message.allActivities ?? [])
         break
+      case 'market/list':
+        handlers.onMarketList?.({
+          pets: message.pets ?? [],
+          total: typeof message.total === 'number' ? message.total : (message.pets ?? []).length,
+          page: typeof message.page === 'number' ? message.page : 1,
+          pageSize: typeof message.pageSize === 'number' ? message.pageSize : (message.pets ?? []).length,
+          kinds: Array.isArray(message.kinds) ? message.kinds : [],
+        })
+        break
+      case 'market/installed':
+        handlers.onMarketInstalled?.(message.pet)
+        break
+      case 'market/uninstalled':
+        handlers.onMarketUninstalled?.({ slug: message.slug })
+        break
+      case 'market/thumb':
+        handlers.onMarketThumb?.({ slug: message.slug, dataUrl: message.dataUrl })
+        break
+      case 'market/pet':
+        handlers.onMarketPet?.({ slug: message.slug, pet: message.pet ?? null, spriteDataUrl: message.spriteDataUrl ?? null })
+        break
       case 'error':
         handlers.onError?.(message.message ?? '未知错误')
         break
@@ -241,6 +286,32 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
     send({ kind: 'tray/click', agent, sessionId, ...(reason ? { reason } : {}) })
   }
 
+  function requestMarketList(options: { query?: string; kind?: string; page?: number; pageSize?: number } = {}): void {
+    send({
+      kind: 'market/list',
+      ...(options.query ? { query: options.query } : {}),
+      ...(options.kind ? { petKind: options.kind } : {}),
+      ...(typeof options.page === 'number' ? { page: options.page } : {}),
+      ...(typeof options.pageSize === 'number' ? { pageSize: options.pageSize } : {}),
+    })
+  }
+
+  function installMarketPet(pet: MarketPet): void {
+    send({ kind: 'market/install', pet })
+  }
+
+  function uninstallMarketPet(slug: string): void {
+    send({ kind: 'market/uninstall', slug })
+  }
+
+  function requestMarketThumb(pet: MarketPet): void {
+    send({ kind: 'market/thumb', pet })
+  }
+
+  function requestMarketPet(pet: MarketPet): void {
+    send({ kind: 'market/pet', pet })
+  }
+
   function close(): void {
     closed = true
     if (reconnectTimer !== null) clearTimeout(reconnectTimer)
@@ -278,6 +349,11 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
     openActivity,
     openTrayItem,
     trayClick,
+    requestMarketList,
+    installMarketPet,
+    uninstallMarketPet,
+    requestMarketThumb,
+    requestMarketPet,
   }
 }
 

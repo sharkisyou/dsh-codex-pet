@@ -32,6 +32,8 @@ export interface PetLibraryEntry {
   id: string
   displayName: string
   description: string
+  /** 宠物包所在目录名（如 `itachi-2`），用于区分同名宠物。 */
+  sourceDir: string
 }
 
 export interface LoadedPetPackage {
@@ -176,7 +178,7 @@ export function createPetLibrary(options: PetLibraryOptions = {}): PetLibrary {
               ? petJson.displayName
               : id
             const description = typeof petJson.description === 'string' ? petJson.description : ''
-            pets.push({ id, displayName, description })
+            pets.push({ id, displayName, description, sourceDir: id })
           } catch {
             // A damaged package should not prevent the other pets from listing.
           }

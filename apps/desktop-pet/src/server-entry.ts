@@ -12,13 +12,25 @@ import { createPetLibrary } from './pet-library.js'
 import { createSettingsStore } from './settings-store.js'
 import { createAppController } from './controller.js'
 import { createUiGateway, UI_PROTOCOL_PATH } from './ui-gateway.js'
+import { createMarket } from './market.js'
 
 const library = createPetLibrary()
 const store = createSettingsStore()
+// MARKET_CACHE_TTL_HOURS 可覆盖 manifest 缓存时长（单位：小时），默认 48 小时。
+const marketTtlHours = Number(process.env.MARKET_CACHE_TTL_HOURS)
+const market = createMarket({
+  cacheTtlMs: Number.isFinite(marketTtlHours) && marketTtlHours > 0
+    ? Math.round(marketTtlHours * 60 * 60 * 1000)
+    : undefined,
+})
 
 let gateway: ReturnType<typeof createUiGateway>
 
+// 开发便利：PET_SERVER_HOST / PET_SERVER_PORT 可覆盖监听地址与端口
+// （例如 PET_SERVER_HOST=0.0.0.0 让浏览器预览通过局域网 IP 连接）。
 const server = createPetServer({
+  host: process.env.PET_SERVER_HOST || undefined,
+  port: process.env.PET_SERVER_PORT ? Number(process.env.PET_SERVER_PORT) : undefined,
   delegates: {
     [UI_PROTOCOL_PATH]: (socket) => {
       gateway.handleConnection(socket)
@@ -27,7 +39,7 @@ const server = createPetServer({
 })
 
 const controller = createAppController({ server, library, store })
-gateway = createUiGateway({ controller })
+gateway = createUiGateway({ controller, market })
 
 server.start()
   .then(() => {

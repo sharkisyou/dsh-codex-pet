@@ -1,227 +1,271 @@
+/*
+ * 桌宠外壳样式（迁移自 CodexPetDesk src/styles.css，适配 DOM 精灵渲染）
+ * - 桌宠窗口：透明、置顶小窗口；DOM 精灵宠物 + 气泡 + 右键菜单 + 活动托盘
+ * - 设置窗口：浅色主题，侧边栏 + 内容卡片布局
+ */
+
 :root {
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  color-scheme: light dark;
+  color: #f7f2e8;
+  background: transparent;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 html,
-body,
-#app {
-  margin: 0;
+body {
   width: 100%;
   height: 100%;
-}
-
-body.pet-window,
-body.pet-window #app {
+  margin: 0;
+  overflow: hidden;
   background: transparent;
 }
 
 #app {
-  display: grid;
-  place-items: center;
-}
-
-#window-content {
   width: 100%;
   height: 100%;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.shell {
   display: grid;
-  place-items: center;
-  padding: 16px;
-  box-sizing: border-box;
-}
-
-.placeholder {
-  text-align: center;
-  opacity: 0.9;
-}
-
-.placeholder .hint {
-  font-size: 0.85rem;
-  opacity: 0.7;
-}
-
-.pet-stage {
-  display: grid;
-  place-items: center;
-  gap: 8px;
-  text-align: center;
-}
-
-#pet-canvas {
-  image-rendering: pixelated;
-  width: 240px;
-  height: 240px;
-  cursor: pointer;
-}
-
-.pet-stage {
-  cursor: grab;
+  width: 100vw;
+  height: 100vh;
+  min-width: 0;
+  min-height: 0;
   user-select: none;
 }
 
-.pet-stage:active {
-  cursor: grabbing;
+/* ---------- 桌宠窗口 ---------- */
+
+.shell--pet {
+  place-items: center;
+  padding: 0;
 }
 
-.pet-status {
-  margin: 0;
-  font-size: 0.8rem;
-  opacity: 0.75;
+.shell--pet .pet-stage {
+  overflow: visible;
+  touch-action: none;
 }
 
-/* Settings window */
-.settings-root {
+.shell--pet .pet-status {
+  display: block;
+}
+
+.shell--settings .pet-stage {
+  display: none;
+}
+
+.shell--settings .pet-context-menu {
+  display: none;
+}
+
+.pet-stage {
+  display: grid;
+  position: relative;
+  place-items: center;
+  min-height: 0;
   width: 100%;
   height: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px;
-  box-sizing: border-box;
-  overflow-y: auto;
+}
+
+/* 说话气泡（DOM 版，替代 Canvas 内绘制） */
+.speech-bubble {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  z-index: 2;
+  display: grid;
+  gap: 2px;
+  width: 252px;
+  max-height: 72px;
+  padding: 8px 10px;
+  border: 1px solid rgb(0 0 0 / 0.08);
+  border-radius: 14px;
+  color: #111827;
+  background: rgb(255 255 255 / 0.94);
+  box-shadow: 0 10px 28px rgb(15 23 42 / 0.18);
+  font-size: 12px;
+  line-height: 1.28;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
   text-align: left;
+  transform: translate(-50%, -8px);
+  transition: opacity 160ms ease, transform 160ms ease;
 }
 
-.settings-title {
-  margin: 0;
-  font-size: 1.4rem;
+/* 气泡小尾巴（指向下方的宠物） */
+.speech-bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  border-right: 1px solid rgb(0 0 0 / 0.08);
+  border-bottom: 1px solid rgb(0 0 0 / 0.08);
+  background: rgb(255 255 255 / 0.94);
+  transform: translateX(-50%) rotate(45deg);
 }
 
-.settings-status,
-.settings-error {
-  margin: 0;
-  font-size: 0.85rem;
+.speech-bubble strong,
+.speech-bubble span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
 }
 
-.settings-error {
-  color: #e5484d;
+.speech-bubble strong {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 800;
+  -webkit-line-clamp: 1;
 }
 
-.settings-section {
-  border-top: 1px solid rgba(128, 128, 128, 0.25);
-  padding-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.speech-bubble span {
+  color: rgb(17 24 39 / 0.78);
+  -webkit-line-clamp: 2;
 }
 
-.settings-section h2 {
-  margin: 0;
-  font-size: 1rem;
+.shell.has-bubble .speech-bubble {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
-.pet-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+/* 宠物（DOM 精灵渲染，CodexPetDesk 同款） */
+.pet {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  z-index: 1;
+  image-rendering: pixelated;
+  background-repeat: no-repeat;
+  filter: drop-shadow(0 12px 12px rgb(0 0 0 / 0.26));
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-drag: none;
+  transition: transform 160ms ease, filter 160ms ease;
+  transform: translateX(-50%);
 }
 
-.pet-item {
-  padding: 8px 12px;
-  border: 1px solid rgba(128, 128, 128, 0.45);
+.pet:active {
+  cursor: grabbing;
+  transform: translateX(-50%) translateY(1px);
+}
+
+/* 未加载占位框（CodexPetDesk .pet:not(.is-loaded)） */
+.pet:not(.is-loaded) {
+  width: 192px;
+  height: 208px;
+  border: 2px dashed rgb(255 255 255 / 0.46);
   border-radius: 8px;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
+  background:
+    linear-gradient(135deg, rgb(230 84 90 / 0.62), rgb(40 156 131 / 0.62)),
+    repeating-linear-gradient(
+      45deg,
+      rgb(255 255 255 / 0.15) 0 8px,
+      transparent 8px 16px
+    );
+  filter: none;
 }
 
-.pet-item.active {
-  border-color: #4c9aff;
-  background: rgba(76, 154, 255, 0.15);
-}
-
-.pet-refresh {
-  align-self: flex-start;
-  padding: 6px 12px;
-  border-radius: 6px;
-  border: 1px solid rgba(128, 128, 128, 0.45);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-}
-
-.hint {
+/* 连接状态小条（桌宠窗口左下角） */
+.pet-status {
+  position: absolute;
+  bottom: 4px;
+  left: 8px;
+  z-index: 1;
+  display: none;
   margin: 0;
-  font-size: 0.78rem;
-  opacity: 0.7;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: rgb(247 242 232 / 0.82);
+  background: rgb(15 23 42 / 0.42);
+  font-size: 10px;
+  line-height: 1.5;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
 }
 
-.zoom-row {
+/* 右键菜单 */
+.pet-context-menu {
+  position: fixed;
+  z-index: 20;
+  width: 128px;
+  padding: 6px;
+  border: 1px solid rgb(15 23 42 / 0.12);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 0.96);
+  box-shadow: 0 16px 40px rgb(15 23 42 / 0.18);
+  backdrop-filter: blur(16px);
+}
+
+.pet-context-menu[hidden] {
+  display: none;
+}
+
+.pet-context-menu button {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
+  width: 100%;
+  min-height: 34px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #1f2937;
+  font: 500 14px/1.2 inherit;
+  text-align: center;
+  cursor: default;
 }
 
-.zoom-slider {
-  flex: 1;
+.pet-context-menu button:hover,
+.pet-context-menu button:focus-visible {
+  background: #edf3ff;
+  color: #2458f6;
+  outline: none;
 }
 
-.zoom-value {
-  min-width: 3.5rem;
-  text-align: right;
-}
-
-.wake-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-}
-
-.agents-list {
-  margin: 0;
-  padding-left: 20px;
-  list-style: disc;
-}
-
-.agents-empty {
-  list-style: none;
-  opacity: 0.7;
-}
-
-.about-line {
-  margin: 0;
-  font-size: 0.85rem;
-}
-
-.market-link {
-  color: #4c9aff;
-  text-decoration: underline;
-  cursor: pointer;
-  align-self: flex-start;
-}
-
-/* Activity tray on the pet window */
+/* 活动托盘（桌宠窗口，多会话活动入口） */
 .activity-tray-wrap {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
+  position: absolute;
+  right: 8px;
+  bottom: 4px;
+  z-index: 3;
 }
 
 .activity-tray-toggle {
-  padding: 4px 12px;
+  display: none !important;
+  padding: 3px 10px;
   border-radius: 999px;
-  border: 1px solid rgba(128, 128, 128, 0.45);
-  background: rgba(0, 0, 0, 0.35);
-  color: inherit;
+  border: 1px solid rgb(255 255 255 / 0.45);
+  background: rgb(15 23 42 / 0.42);
+  color: #fff;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 0.85);
   font: inherit;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   cursor: pointer;
+  backdrop-filter: blur(8px);
 }
 
 .activity-tray-toggle:hover {
-  background: rgba(0, 0, 0, 0.55);
+  background: rgb(15 23 42 / 0.62);
 }
 
 .activity-tray {
   position: absolute;
+  right: 0;
   bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
   width: min(320px, calc(100vw - 24px));
   max-height: 240px;
   overflow-y: auto;
@@ -229,12 +273,18 @@ body.pet-window #app {
   flex-direction: column;
   gap: 4px;
   padding: 8px;
-  border: 1px solid rgba(128, 128, 128, 0.4);
+  border: 1px solid rgb(255 255 255 / 0.12);
   border-radius: 12px;
-  background: rgba(20, 20, 20, 0.94);
+  background: rgb(20 24 30 / 0.94);
   color: #eee;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
-  z-index: 10;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
+  backdrop-filter: blur(16px);
+}
+
+/* 覆盖 hidden 属性：display:flex 会压过 UA 的 [hidden]{display:none}，
+ * 否则空托盘会显示成一条深色横条。 */
+.activity-tray[hidden] {
+  display: none;
 }
 
 .activity-tray-item {
@@ -253,7 +303,7 @@ body.pet-window #app {
 }
 
 .activity-tray-item:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgb(255 255 255 / 0.08);
 }
 
 .activity-tray-title {
@@ -270,11 +320,1307 @@ body.pet-window #app {
 }
 
 .activity-tray-item.unread::after {
-  content: '';
+  content: "";
   display: inline-block;
   width: 6px;
   height: 6px;
   margin-left: 6px;
   border-radius: 50%;
   background: #4c9aff;
+}
+
+/* ---------- 设置窗口（浅色主题） ---------- */
+
+.shell--settings {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  color: #151923;
+  background: #f5f7fb;
+}
+
+.shell--settings #window-content {
+  width: 100%;
+  height: 100%;
+}
+
+.settings-root {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  gap: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  color: #151923;
+  background: #f7f9fd;
+}
+
+.settings-sidebar {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 18px 12px;
+  border-right: 1px solid #e5e9f2;
+  background: rgb(255 255 255 / 0.86);
+}
+
+.settings-brand {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.brand-mark {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 8px;
+  color: #fff;
+  background: linear-gradient(135deg, #3f7cff, #7457ff);
+  box-shadow: 0 8px 18px rgb(63 124 255 / 0.28);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.pet-meta {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pet-meta strong {
+  overflow: hidden;
+  color: #111827;
+  font-size: 13px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pet-meta span {
+  overflow: hidden;
+  color: #7b8494;
+  font-size: 11px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-nav {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  margin-top: 42px;
+}
+
+.settings-nav .tab-button {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  justify-items: start;
+  height: 38px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  color: #667085;
+  background: transparent;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-nav .tab-button.is-active {
+  color: #2f67ff;
+  background: #eef3ff;
+}
+
+.nav-icon {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  font-size: 13px;
+}
+
+.nav-icon svg {
+  display: block;
+}
+
+.settings-sidebar-footer {
+  display: grid;
+  justify-items: start;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid #dbe4ff;
+  border-radius: 999px;
+  color: #3f67e8;
+  background: #eef3ff;
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+/* 已连接时显示绿色圆点 */
+.status-pill.is-online::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 2px rgb(34 197 94 / 0.18);
+}
+
+.status-pill.is-online {
+  border-color: #c8ecd8;
+  color: #15803d;
+  background: #ecfdf3;
+}
+
+.settings-main {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+  min-height: 0;
+  padding: 20px 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: #c8d1e2 transparent;
+  scrollbar-width: thin;
+}
+
+.settings-main::-webkit-scrollbar {
+  width: 8px;
+}
+
+.settings-main::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #c8d1e2;
+  background-clip: padding-box;
+}
+
+.settings-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.settings-header h1 {
+  margin: 0 0 6px;
+  color: #111827;
+  font-size: 27px;
+  line-height: 1.1;
+  font-weight: 800;
+}
+
+.settings-header p {
+  margin: 0;
+  color: #667085;
+  font-size: 13px;
+}
+
+/* 顶部连接状态：胶囊化，已连接时带绿点 */
+.settings-header .settings-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  margin: 0;
+  padding: 3px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  color: #667085;
+  background: #f8fafc;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 600;
+}
+
+.settings-header .settings-status.is-online {
+  border-color: #c8ecd8;
+  color: #15803d;
+  background: #ecfdf3;
+}
+
+.settings-header .settings-status.is-online::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+}
+
+.settings-header .settings-error {
+  font-size: 12px;
+  color: #e5484d;
+}
+
+/* 分类标签（侧边导航下） */
+.settings-tabs {
+  display: flex;
+  gap: 26px;
+  padding: 0;
+  border-bottom: 1px solid #dfe5ef;
+}
+
+.settings-category-tabs .tab-button {
+  position: relative;
+  height: 38px;
+  border: 0;
+  border-radius: 0;
+  color: #667085;
+  background: transparent;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-category-tabs .tab-button.is-active {
+  color: #2f67ff;
+  background: transparent;
+}
+
+.settings-category-tabs .tab-button.is-active::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: #2f67ff;
+}
+
+.settings-page {
+  display: none;
+  gap: 12px;
+  min-height: 0;
+}
+
+.settings-page.is-active {
+  display: grid;
+  align-content: start;
+}
+
+/* 设置页布局 */
+.settings-page[data-page="settings"].is-active {
+  grid-template-columns: minmax(0, 1fr) minmax(210px, 0.8fr);
+  gap: 12px;
+  /* 双列卡片等高：同行两张卡片底部对齐，避免梯形留白 */
+  align-items: stretch;
+}
+
+/* P2-7：设置页分组标题（占满整行） */
+.settings-group-title {
+  grid-column: 1 / -1;
+  align-self: end;
+  margin: 8px 0 0;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.settings-card {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #e4e9f2;
+  border-radius: 12px;
+  background: #fff;
+  /* 统一轻投影：与按钮/卡片一致，避免风格割裂 */
+  box-shadow: 0 1px 3px rgb(16 24 40 / 0.08), 0 1px 2px rgb(16 24 40 / 0.06);
+}
+
+/* 宠物选择卡片占整行（内含预览 + 列表，半宽放不下） */
+.settings-card--wide {
+  grid-column: 1 / -1;
+}
+
+.settings-section-title {
+  color: #111827;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.setting-hint {
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 卡片标题行（标题 + 右侧小操作按钮，如「刷新」） */
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.refresh-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  border: 1px solid #dce3ee;
+  border-radius: 999px;
+  color: #475467;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.refresh-button svg {
+  display: block;
+}
+
+.refresh-button:hover {
+  border-color: #b8c6dc;
+  background: #f8faff;
+  color: #2f67ff;
+}
+
+/* 宠物选择 */
+.pet-settings-grid {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 24px;
+  align-items: center;
+}
+
+/* 当前宠物卡右侧：说明 + 按钮横向排布，填满整行 */
+.pet-overview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-width: 0;
+}
+
+.pet-overview-text {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pet-overview .primary-action {
+  flex: 0 0 auto;
+}
+
+.settings-pet-preview {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  color: #667085;
+  font-size: 12px;
+  text-align: center;
+}
+
+/* 选中宠物的实时动画预览 */
+.pet-preview {
+  position: relative;
+  width: 160px;
+  height: 168px;
+  border: 1px solid #e2e9f5;
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 50% 40%, rgb(63 124 255 / 0.1), transparent 60%),
+    linear-gradient(135deg, #f4f7fc, #e9eef7);
+}
+
+.pet-preview-pet {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  image-rendering: pixelated;
+  background-repeat: no-repeat;
+  filter: drop-shadow(0 10px 10px rgb(15 23 42 / 0.24));
+}
+
+/* 未选中/未加载时的虚线占位 */
+.pet-preview-pet:not(.is-loaded) {
+  width: 96px;
+  height: 104px;
+  border: 2px dashed #c9d4e6;
+  border-radius: 8px;
+  background: transparent;
+  filter: none;
+}
+
+.settings-pet-preview strong {
+  color: #111827;
+  font-size: 13px;
+}
+
+.settings-form {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  align-content: start;
+}
+
+.settings-form-label {
+  color: #344054;
+  font-size: 13px;
+}
+
+/* 宠物列表 / 卡片 */
+.pet-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  min-height: 0;
+}
+
+/* 本地宠物紧凑网格卡片：与在线市场一致的列式布局（缩略图在上、信息/按钮竖排） */
+.pet-list .pet-card {
+  grid-template-columns: 1fr;
+  grid-template-rows: auto auto auto;
+  justify-items: center;
+  gap: 6px;
+  min-height: 0;
+  padding: 12px 8px;
+  text-align: center;
+}
+
+.pet-list .pet-card .pet-card-thumb {
+  width: 68px;
+  height: 68px;
+}
+
+.pet-list .pet-card .pet-card-body {
+  width: 100%;
+  justify-items: center;
+}
+
+.pet-list .pet-card .pet-card-name-row {
+  justify-content: center;
+}
+
+.pet-list .pet-card .pet-card-body strong {
+  font-size: 12px;
+}
+
+.pet-list .pet-card .pet-card-body span {
+  font-size: 10px;
+  -webkit-line-clamp: 1;
+  line-height: 1.4;
+}
+
+.pet-list .pet-card .pet-card-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  width: 100%;
+}
+
+.pet-list .pet-card .pet-card-action {
+  width: 100%;
+}
+
+.pet-list .pet-card .pet-card-delete {
+  width: 52px;
+}
+
+.pet-card {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 82px;
+  padding: 9px 12px;
+  border: 1px solid #e4e9f2;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 6px 16px rgb(16 24 40 / 0.04);
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.pet-card:hover {
+  border-color: #c8d4ea;
+  box-shadow: 0 10px 22px rgb(16 24 40 / 0.09);
+  transform: translateY(-1px);
+}
+
+.pet-card.is-active {
+  border-color: rgb(47 103 255 / 0.32);
+  background: #f4f7ff;
+}
+
+.pet-card-thumb {
+  width: 64px;
+  height: 64px;
+  border: 1px solid #e4e9f2;
+  border-radius: 9px;
+  background:
+    radial-gradient(circle at 50% 42%, rgb(63 124 255 / 0.14), transparent 55%),
+    linear-gradient(135deg, #f0f4ff, #e8eef8);
+  image-rendering: pixelated;
+}
+
+.pet-card-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.pet-card-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 同名宠物来源 tag（如 itachi-2） */
+.pet-tag {
+  flex: 0 0 auto;
+  max-width: 110px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: #6b7280;
+  background: #f1f4f9;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pet-card-body strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #111827;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+/* 描述最多两行，词内换行避免在单词中间硬截断 */
+.pet-card-body span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.pet-card-action {
+  width: 82px;
+  height: 32px;
+  border: 1px solid #dce3ee;
+  border-radius: 8px;
+  color: #344054;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pet-card.is-active .pet-card-action {
+  border-color: #2f67ff;
+  color: #fff;
+  background: linear-gradient(135deg, #2f67ff, #244fe8);
+}
+
+.pet-card-action:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+/* 本地宠物卡片删除按钮 */
+.pet-card-delete {
+  width: 60px;
+  height: 32px;
+  border: 1px solid #f1c7c7;
+  border-radius: 8px;
+  color: #d03050;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pet-card-delete:hover {
+  border-color: #e8a8b0;
+  background: #fdf1f3;
+}
+
+.pet-card-delete:active {
+  background: #fbe4e8;
+}
+
+/* P1-4：宠物页「列表 + 悬停大图预览」双栏 */
+.pet-browser {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  gap: 16px;
+  align-items: start;
+  min-width: 0;
+}
+
+.pet-browser-preview {
+  position: sticky;
+  top: 0;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 6px;
+  min-height: 260px;
+  padding: 14px 12px 16px;
+  border: 1px solid #e4e9f2;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(16 24 40 / 0.06);
+  text-align: center;
+}
+
+.pet-browser-preview-pet {
+  position: relative;
+  image-rendering: pixelated;
+  background-repeat: no-repeat;
+  filter: drop-shadow(0 12px 12px rgb(15 23 42 / 0.26));
+}
+
+.pet-browser-preview-pet:not(.is-loaded) {
+  width: 128px;
+  height: 139px;
+  border: 2px dashed #c9d4e6;
+  border-radius: 10px;
+  background: transparent;
+  filter: none;
+}
+
+.pet-browser-preview strong {
+  color: #111827;
+  font-size: 14px;
+}
+
+.pet-browser-preview-desc {
+  max-width: 100%;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.pet-browser-preview-meta {
+  max-width: 100%;
+  color: #8a94a6;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.pet-browser-action {
+  margin-top: 4px;
+  height: 32px;
+  padding: 0 18px;
+}
+
+.pet-browser-action:disabled {
+  cursor: default;
+  color: #98a2b3;
+  border-color: #e4e9f2;
+  background: #f6f8fb;
+  opacity: 1;
+}
+
+/* 市场页列表：响应式网格，提高信息密度 */
+.market-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px;
+  gap: 10px;
+  align-items: center;
+}
+
+.market-kind {
+  height: 40px;
+  padding: 0 10px;
+  border: 1px solid #dce3ee;
+  border-radius: 8px;
+  color: #344054;
+  background: #fff;
+  font-size: 13px;
+  outline: 0;
+  cursor: pointer;
+}
+
+.market-status {
+  margin: 0;
+  color: #8a94a6;
+  font-size: 12px;
+}
+
+.market-list {
+  display: grid;
+  gap: 10px;
+  /* 自适应列数（按容器宽度自动排）；每页数量由前端按"列数 × 3 行"动态请求，
+     保证整页铺满。 */
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+
+/* 网格卡片：缩略图在上，名称/元信息/按钮竖排 */
+.market-item {
+  grid-template-columns: 1fr;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  justify-items: center;
+  gap: 6px;
+  min-height: 0;
+  padding: 12px 8px;
+  text-align: center;
+}
+
+.market-item .pet-card-thumb {
+  width: 72px;
+  height: 72px;
+  background-color: #eef3ff;
+}
+
+.market-item .pet-card-name-row {
+  justify-content: center;
+}
+
+.market-item .pet-card-body strong {
+  font-size: 12px;
+}
+
+.market-item .pet-card-body span {
+  font-size: 10px;
+  -webkit-line-clamp: 1;
+}
+
+.market-install {
+  width: 100%;
+  height: 28px;
+  color: #2563eb;
+  border-color: #bcd0ff;
+  background: #fff;
+  font-size: 12px;
+}
+
+.market-item .pet-card-action[disabled] {
+  color: #98a2b3;
+  border-color: #e4e9f2;
+  background: #f6f8fb;
+  opacity: 1;
+}
+
+/* 分页条 */
+.market-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 2px;
+}
+
+.pager-button {
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid #dce3ee;
+  border-radius: 8px;
+  color: #344054;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pager-button:hover:not(:disabled) {
+  border-color: #b8c6dc;
+  color: #2f67ff;
+  background: #f8faff;
+}
+
+.pager-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.pager-label {
+  color: #667085;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 市场宠物详情弹窗 */
+.market-detail {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(15 23 42 / 0.4);
+  backdrop-filter: blur(4px);
+}
+
+.market-detail[hidden] {
+  display: none;
+}
+
+.market-detail-card {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  width: min(420px, 92vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  padding: 20px;
+  border: 1px solid #e4e9f2;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgb(15 23 42 / 0.25);
+  text-align: center;
+}
+
+.market-detail-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  color: #667085;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.market-detail-close:hover {
+  background: #f1f4f9;
+  color: #111827;
+}
+
+.market-detail-preview {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 240px;
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 50% 40%, rgb(63 124 255 / 0.1), transparent 60%),
+    linear-gradient(135deg, #f4f7fc, #e9eef7);
+  border: 1px solid #e9eef6;
+}
+
+/* 详情加载动画：浅蓝磨砂方框（带边框与外发光，参考图样式），
+   从小到大扩张并淡出（循环播放）；铺满预览容器，最大时与磨砂背景完全重合。 */
+.market-detail-loading {
+  position: absolute;
+  inset: 0;
+  border: 5px solid rgb(143 166 245 / 0.9);
+  border-radius: 12px;
+  background: rgb(216 222 255 / 0.28);
+  box-shadow:
+    0 0 0 4px rgb(216 222 255 / 0.25),
+    0 0 28px rgb(120 150 255 / 0.45);
+  animation: market-box-grow 1.3s ease-in-out infinite;
+}
+
+.market-detail-loading[hidden] {
+  display: none;
+}
+
+@keyframes market-box-grow {
+  0% {
+    opacity: 0.95;
+    transform: scale(0.08);
+  }
+  60% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.005);
+  }
+}
+
+.market-detail-pet {
+  image-rendering: pixelated;
+  background-repeat: no-repeat;
+  filter: drop-shadow(0 12px 12px rgb(15 23 42 / 0.26));
+}
+
+/* 详情宠物未加载时无占位框：加载反馈由 market-detail-loading 方框动画承担，
+   避免出现"外层加载方框 + 内层虚线框"两层叠加。 */
+.market-detail-pet:not(.is-loaded) {
+  filter: none;
+}
+
+.market-detail-name {
+  margin: 6px 0 0;
+  color: #111827;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.market-detail-meta {
+  margin: 0;
+  color: #667085;
+  font-size: 12px;
+}
+
+.market-detail-desc {
+  margin: 0;
+  color: #344054;
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.market-detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.market-detail-actions .primary-action {
+  padding: 0 22px;
+}
+
+.market-detail-link {
+  color: #2f67ff;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.market-detail-link:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 640px) {
+  .market-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.empty-state {
+  padding: 18px 10px;
+  color: #667085;
+  font-size: 12px;
+  text-align: center;
+}
+
+/* 搜索 */
+.petdex-searchbar {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  height: 40px;
+  border: 1px solid #dce3ee;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 6px 18px rgb(16 24 40 / 0.04);
+}
+
+.petdex-searchbar span {
+  color: #8a94a6;
+  font-size: 12px;
+  text-align: center;
+}
+
+.petdex-searchbar input {
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  color: #111827;
+  background: transparent;
+  font-size: 13px;
+}
+
+/* 缩放 */
+.zoom-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.zoom-slider {
+  flex: 1;
+  accent-color: #2f67ff;
+}
+
+/* 缩放范围刻度 */
+.zoom-scale {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 2px;
+  color: #8a94a6;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.zoom-value {
+  min-width: 3.5rem;
+  margin-left: 2px;
+  text-align: right;
+  color: #344054;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 唤醒 */
+.wake-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #344054;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.wake-checkbox {
+  width: 36px;
+  height: 22px;
+  accent-color: #2f67ff;
+}
+
+/* 存储 / 系统信息 */
+.storage-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.storage-icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 8px;
+  color: #2f67ff;
+  background: #eef3ff;
+}
+
+/* 只读路径：实线浅底，明确不可编辑 */
+.storage-path {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  color: #475467;
+  background: #f8fafc;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.icon-button {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #dce3ee;
+  border-radius: 8px;
+  color: #475467;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.icon-button:hover {
+  border-color: #b8c6dc;
+  background: #f8faff;
+  color: #2f67ff;
+}
+
+/* 系统信息卡：来源 / 版本 两行 */
+.system-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.system-label {
+  flex: 0 0 56px;
+  color: #8a94a6;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.system-value {
+  color: #344054;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.agents-list {
+  margin: 0;
+  padding-left: 20px;
+  list-style: disc;
+  color: #344054;
+  font-size: 13px;
+}
+
+.agents-empty {
+  list-style: none;
+  opacity: 0.7;
+  color: #667085;
+}
+
+.about-line {
+  margin: 0;
+  color: #344054;
+  font-size: 13px;
+}
+
+.market-link {
+  color: #2f67ff;
+  text-decoration: underline;
+  cursor: pointer;
+  align-self: flex-start;
+  font-size: 13px;
+}
+
+.file-button {
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #dce3ee;
+  border-radius: 7px;
+  color: #344054;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.file-button:hover {
+  border-color: #b8c6dc;
+  background: #f8faff;
+}
+
+.file-button:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+/* 主操作按钮（如「去宠物页选择」） */
+.primary-action {
+  color: #fff;
+  border-color: #2f67ff;
+  background: linear-gradient(135deg, #2f67ff, #244fe8);
+  box-shadow: none;
+}
+
+.primary-action:hover {
+  border-color: #244fe8;
+  background: linear-gradient(135deg, #3b73ff, #244fe8);
+}
+
+.primary-action:active {
+  filter: brightness(0.96);
+}
+
+/* 响应式 */
+@media (max-width: 640px) {
+  .settings-root {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .settings-sidebar {
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto;
+    gap: 12px;
+    align-items: center;
+    padding: 12px;
+    border-right: 0;
+    border-bottom: 1px solid #e5e9f2;
+  }
+
+  .settings-nav {
+    grid-auto-flow: column;
+    margin-top: 0;
+  }
+
+  .settings-sidebar-footer {
+    display: none;
+  }
+
+  .settings-main {
+    padding: 16px;
+  }
+
+  .settings-page[data-page="settings"].is-active {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pet-settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* 当前宠物卡右侧：窄屏下按钮换行整宽 */
+  .pet-overview {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .settings-group-title,
+  .settings-card--wide {
+    grid-column: auto;
+  }
+
+  /* 宠物页：列表与预览面板改为上下堆叠 */
+  .pet-browser {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pet-browser-preview {
+    position: static;
+    min-height: 0;
+  }
+}
+
+@media (max-width: 420px) {
+  .pet-card {
+    grid-template-columns: 46px minmax(0, 1fr);
+  }
+
+  .pet-card-action {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .pet-card-thumb {
+    width: 46px;
+    height: 46px;
+  }
 }

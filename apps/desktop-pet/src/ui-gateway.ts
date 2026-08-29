@@ -13,6 +13,8 @@ import type { ParsedPet } from '@yshark/pet-core'
 
 import type { AppController, AppStateSnapshot } from './controller.js'
 import type { WsLike } from './server.js'
+import type { Market } from './market.js'
+import type { MarketPet } from './market-types.js'
 
 export const UI_PROTOCOL_PATH = `${PROTOCOL_PATH}/ui`
 
@@ -30,6 +32,11 @@ export type UiClientMessage =
   | { kind: 'session/open'; agent: string; sessionId: string; reason?: string }
   | { kind: 'tray/open'; agent: string; sessionId: string; reason?: string }
   | { kind: 'tray/click'; agent: string; sessionId: string; reason?: string }
+  | { kind: 'market/list'; query?: string; petKind?: string; page?: number; pageSize?: number }
+  | { kind: 'market/install'; pet: MarketPet }
+  | { kind: 'market/uninstall'; slug: string }
+  | { kind: 'market/thumb'; pet: MarketPet }
+  | { kind: 'market/pet'; pet: MarketPet }
 
 export type UiServerMessage =
   | { kind: 'state'; state: AppStateSnapshot }
@@ -42,10 +49,17 @@ export type UiServerMessage =
   | { kind: 'tray'; tray: AppStateSnapshot['tray'] }
   | { kind: 'allActivities'; allActivities: AppStateSnapshot['allActivities'] }
   | { kind: 'pet'; id: string; pet: ParsedPet; spriteDataUrl: string; atlasRows: number }
+  | { kind: 'market/list'; pets: MarketPet[]; total: number; page: number; pageSize: number; kinds: string[] }
+  | { kind: 'market/installed'; pet: { id: string; displayName: string; sourceDir: string } }
+  | { kind: 'market/uninstalled'; slug: string }
+  | { kind: 'market/thumb'; slug: string; dataUrl: string }
+  | { kind: 'market/pet'; slug: string; pet: ParsedPet | null; spriteDataUrl: string | null }
   | { kind: 'error'; message: string }
 
 export interface UiGatewayOptions {
   controller: AppController
+  /** 在线宠物市场访问器（可选；未提供时 market/* 消息返回错误）。 */
+  market?: Market
 }
 
 export interface UiGateway {
@@ -102,7 +116,7 @@ function send(socket: WsLike, message: unknown): boolean {
 }
 
 export function createUiGateway(options: UiGatewayOptions): UiGateway {
-  const { controller } = options
+  const { controller, market } = options
   const sockets = new Set<WsLike>()
   let stopped = false
 
@@ -154,6 +168,112 @@ export function createUiGateway(options: UiGatewayOptions): UiGateway {
         const pets = await controller.reloadLibrary()
         broadcast({ kind: 'pets', pets } satisfies UiServerMessage)
         await sendState(socket)
+        return
+      }
+      case 'market/list': {
+        if (!market) {
+          send(socket, { kind: 'error', message: '在线宠物市场不可用' })
+          return
+        }
+        try {
+          const query = typeof message.query === 'string' ? message.query : undefined
+          const kind = typeof message.petKind === 'string' ? message.petKind : undefined
+          const page = typeof message.page === 'number' ? message.page : 1
+          const pageSize = typeof message.pageSize === 'number' ? message.pageSize : undefined
+          const result = await market.listPets({ query, kind, page, pageSize })
+          const kinds = await market.listKinds()
+          send(socket, {
+            kind: 'market/list',
+            pets: result.pets,
+            total: result.total,
+            page,
+            pageSize: result.pets.length,
+            kinds,
+          } satisfies UiServerMessage)
+        } catch (error) {
+          send(socket, { kind: 'error', message: `市场加载失败: ${error instanceof Error ? error.message : String(error)}` })
+        }
+        return
+      }
+      case 'market/install': {
+        if (!market) {
+          send(socket, { kind: 'error', message: '在线宠物市场不可用' })
+          return
+        }
+        const pet = message.pet
+        if (!pet || typeof pet.slug !== 'string' || pet.slug === '') {
+          send(socket, { kind: 'error', message: '缺少市场宠物信息' })
+          return
+        }
+        const result = await market.installPet(pet)
+        if (!result.ok) {
+          send(socket, { kind: 'error', message: `安装失败: ${result.error}` })
+          return
+        }
+        send(socket, { kind: 'market/installed', pet: result.value } satisfies UiServerMessage)
+        // 安装成功后刷新本地宠物库并广播，让本地列表立即出现新宠物。
+        const pets = await controller.reloadLibrary()
+        broadcast({ kind: 'pets', pets } satisfies UiServerMessage)
+        await sendState(socket)
+        return
+      }
+      case 'market/uninstall': {
+        if (!market) {
+          send(socket, { kind: 'error', message: '在线宠物市场不可用' })
+          return
+        }
+        const slug = typeof message.slug === 'string' ? message.slug : ''
+        if (slug === '') {
+          send(socket, { kind: 'error', message: '缺少宠物 slug' })
+          return
+        }
+        const result = await market.uninstallPet(slug)
+        if (!result.ok) {
+          send(socket, { kind: 'error', message: `卸载失败: ${result.error}` })
+          return
+        }
+        send(socket, { kind: 'market/uninstalled', slug } satisfies UiServerMessage)
+        // 卸载后同样刷新并广播本地宠物库。
+        const petsAfter = await controller.reloadLibrary()
+        broadcast({ kind: 'pets', pets: petsAfter } satisfies UiServerMessage)
+        await sendState(socket)
+        return
+      }
+      case 'market/thumb': {
+        if (!market) {
+          send(socket, { kind: 'error', message: '在线宠物市场不可用' })
+          return
+        }
+        const pet = message.pet
+        if (!pet || typeof pet.slug !== 'string' || pet.slug === '') {
+          send(socket, { kind: 'error', message: '缺少市场宠物信息' })
+          return
+        }
+        const dataUrl = await market.getThumbnail(pet)
+        if (dataUrl === null) {
+          send(socket, { kind: 'error', message: `缩略图生成失败: ${pet.slug}` })
+          return
+        }
+        send(socket, { kind: 'market/thumb', slug: pet.slug, dataUrl } satisfies UiServerMessage)
+        return
+      }
+      case 'market/pet': {
+        if (!market) {
+          send(socket, { kind: 'error', message: '在线宠物市场不可用' })
+          return
+        }
+        const pet = message.pet
+        if (!pet || typeof pet.slug !== 'string' || pet.slug === '') {
+          send(socket, { kind: 'error', message: '缺少市场宠物信息' })
+          return
+        }
+        const detail = await market.getPetDetail(pet)
+        send(socket, {
+          kind: 'market/pet',
+          slug: pet.slug,
+          pet: detail.pet,
+          spriteDataUrl: detail.spriteDataUrl,
+        } satisfies UiServerMessage)
         return
       }
       case 'pet/get': {

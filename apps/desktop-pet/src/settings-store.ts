@@ -23,7 +23,7 @@ export interface PetSettings {
 
 export const DEFAULT_SETTINGS: PetSettings = Object.freeze({
   selectedPetId: null,
-  zoom: 1,
+  zoom: 1.2,
   awake: true,
   windowX: null,
   windowY: null,
