@@ -315,3 +315,48 @@ test('pet cache is LRU-bounded: evicted pets reload from disk, size stays capped
     await rm(dataDir, { recursive: true, force: true })
   }
 })
+
+test('market/pet 已安装宠物从本地读取，未安装才请求 CDN', async () => {
+  const libraryRoot = await makeTempDir()
+  const dataDir = await makeTempDir()
+  try {
+    await writePet(libraryRoot, 'panda')
+    const server = createPetServer({ logger: { info() {} } })
+    const library = createPetLibrary({ root: libraryRoot })
+    const store = createSettingsStore({ dataDir })
+    const controller = createAppController({ server, library, store, version: '0.1.0' })
+
+    // mock market：记录 getPetDetail 是否被调用
+    let cdnCalls = 0
+    const market = {
+      getPetDetail: async () => { cdnCalls += 1; return { pet: null, spriteDataUrl: null } },
+      // 其余方法不被本次测试调用
+    } as any
+
+    const gateway = createUiGateway({ controller, market })
+    try {
+      const ui = new FakeSocket()
+      gateway.handleConnection(ui)
+
+      // 已安装宠物（panda 在本地库）：应走本地，不触发 CDN。
+      ui.emit('message', JSON.stringify({ kind: 'market/pet', pet: { slug: 'panda' } }))
+      await new Promise((r) => setTimeout(r, 50))
+      const localMsg = findMessage<any>(ui, 'market/pet')
+      assert.ok(localMsg, '已安装宠物应返回 market/pet')
+      assert.equal(localMsg.slug, 'panda')
+      assert.equal(localMsg.pet.displayName, 'Pet panda')
+      assert.ok(localMsg.spriteDataUrl.startsWith('data:image/png;base64,'))
+      assert.equal(cdnCalls, 0, '已安装宠物不应触发 CDN 下载')
+
+      // 未安装宠物（不在本地库）：应走 CDN。
+      ui.emit('message', JSON.stringify({ kind: 'market/pet', pet: { slug: 'not-installed' } }))
+      await new Promise((r) => setTimeout(r, 50))
+      assert.equal(cdnCalls, 1, '未安装宠物应触发 CDN 下载')
+    } finally {
+      gateway.stop()
+    }
+  } finally {
+    await rm(libraryRoot, { recursive: true, force: true })
+    await rm(dataDir, { recursive: true, force: true })
+  }
+})

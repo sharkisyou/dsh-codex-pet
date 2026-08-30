@@ -267,6 +267,18 @@ export function createUiGateway(options: UiGatewayOptions): UiGateway {
           send(socket, { kind: 'error', message: '缺少市场宠物信息' })
           return
         }
+        // 已安装的宠物优先从本地读取（~/.codex/pets/<slug>/）：无需再请求 CDN，
+        // 加载更快且离线可用。未安装才走 CDN 下载。
+        const local = await controller.loadPet(pet.slug)
+        if (local !== null) {
+          send(socket, {
+            kind: 'market/pet',
+            slug: pet.slug,
+            pet: local.pet,
+            spriteDataUrl: local.spriteDataUrl,
+          } satisfies UiServerMessage)
+          return
+        }
         const detail = await market.getPetDetail(pet)
         send(socket, {
           kind: 'market/pet',
