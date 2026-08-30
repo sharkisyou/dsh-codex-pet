@@ -47,13 +47,21 @@ input {
 /* ---------- 桌宠窗口 ---------- */
 
 .shell--pet {
-  place-items: center;
+  /* 宠物 stage 铺满窗口：place-items 默认 center 会把 stage 按内容高度
+     居中压缩（窗口比内容高时宠物偏离预期、被顶部裁切）。stretch 让 stage
+     占满，宠物 bottom:4px 贴底、气泡 top:6px 贴顶，布局稳定。 */
+  place-items: stretch;
   padding: 0;
 }
 
 .shell--pet .pet-stage {
   overflow: visible;
   touch-action: none;
+  /* 宠物窗 stage 必须占满整个窗口，否则宠物被顶到窗口上方/裁切。
+     height:100% 在 grid 里只解析为单个轨道高度（shell 有多子元素时
+     轨道只有窗口一半高），100vh 直接占满视口最可靠。 */
+  grid-row: 1 / -1;
+  height: 100vh;
 }
 
 .shell--pet .pet-status {
