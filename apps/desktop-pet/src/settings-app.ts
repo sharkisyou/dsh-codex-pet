@@ -991,6 +991,19 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
       thumb.dataset.thumb = '1'
       applyThumbSprite(thumb, pet.id)
       requestPetData(pet.id)
+      // 点击缩略图：预览窗口显示该宠物并播放下一个动作（循环播放）。
+      // 数据未加载完成时（is-loaded 未就绪）不播放，避免对空画布无效操作。
+      thumb.addEventListener('click', (event) => {
+        event.stopPropagation()
+        // 预览已显示该宠物时直接轮播（不重置轮播游标，连续点击可循环所有动作）；
+        // 切换到另一只宠物时先更新预览，从它的第一个动作开始。
+        if (browserPreviewId !== pet.id) {
+          setBrowserPreview(pet.id)
+        }
+        if (previewPanelPet.classList.contains('is-loaded')) {
+          hoverRenderer.playNextAnimation()
+        }
+      })
       cardEl.appendChild(thumb)
       const body = h('div', 'pet-card-body')
       const nameRow = h('div', 'pet-card-name-row')
