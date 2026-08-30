@@ -59,10 +59,10 @@ Write-Output ('   → ' + \$WD + ' (' + (Get-ChildItem \$WD | Measure-Object).Co
 # ---------- 3. 首次依赖 + TS 包 ----------
 install_deps() {
   echo "▶ 3/5 Windows 装依赖 + 构建 TS 包（首次，之后可跳过）..."
-  ps "\$env:Path = \"\$env:USERPROFILE\\.cargo\\bin;\" + \$env:Path
+  ps "\$env:Path = \"\$env:USERPROFILE\\.cargo\\bin;\$WD\\node_modules\\.bin;\" + \$env:Path
 Set-Location \$WD
 cmd /c \"npm install --no-audit --no-fund 2>&1\"
-Set-Location \"\$WD\\packages\\pet-core\";     cmd /c \"npm run build 2>&1\"
+Set-Location \"\$WD\\packages\\pet-core\";     cmd /c \"npx tsc -p tsconfig.json 2>&1\"
 Set-Location \"\$WD\\packages\\pet-protocol\"; cmd /c \"npm run build 2>&1\"
 Set-Location \"\$WD\\apps\\desktop-pet\";      cmd /c \"npm install --no-audit --no-fund 2>&1\"
 Write-Output '   deps done'"
@@ -71,16 +71,19 @@ Write-Output '   deps done'"
 # ---------- 4. 构建前端 + 编译 Tauri ----------
 build_win() {
   echo "▶ 4/5 Windows 构建前端 + 编译 Tauri..."
-  ps "\$env:Path = \"\$env:USERPROFILE\\.cargo\\bin;\" + \$env:Path
+  ps "\$env:Path = \"\$env:USERPROFILE\\.cargo\\bin;\$WD\\node_modules\\.bin;\" + \$env:Path
 \$icons = \"\$WD\\apps\\desktop-pet\\src-tauri\\icons\"
 if (-not (Test-Path \"\$icons\\icon.ico\")) {
   Write-Output '   缺 icon.ico，用 tauri icon 生成...'
   Set-Location \"\$WD\\apps\\desktop-pet\"
   cmd /c \"npx tauri icon src-tauri/icons/icon.png 2>&1\" | Out-Null
 }
+# 先构建依赖的 TS 包，再构建前端 + 编译（显式 npx，避免 npm workspace 提升混乱）
+Set-Location \"\$WD\\packages\\pet-core\";     cmd /c \"npx tsc -p tsconfig.json 2>&1\"
+Set-Location \"\$WD\\packages\\pet-protocol\"; cmd /c \"npm run build 2>&1\"
 Set-Location \"\$WD\\apps\\desktop-pet\"
-cmd /c \"npm run build 2>&1\"
-cmd /c \"npm run tauri -- build --debug 2>&1\"
+cmd /c \"npx tsc --noEmit 2>&1 && npx vite build 2>&1\"
+cmd /c \"npx tauri build --debug 2>&1\"
 Write-Output ('   → ' + \$PWD + '\\src-tauri\\target\\debug\\desktop-pet.exe')"
 }
 

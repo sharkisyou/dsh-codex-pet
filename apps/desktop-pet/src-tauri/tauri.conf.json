@@ -20,7 +20,9 @@
         "minWidth": 160,
         "minHeight": 160,
         "transparent": true,
+        "backgroundColor": "#00000000",
         "decorations": false,
+        "shadow": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "resizable": true
