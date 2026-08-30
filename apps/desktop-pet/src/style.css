@@ -158,7 +158,9 @@ input {
   z-index: 1;
   image-rendering: pixelated;
   background-repeat: no-repeat;
-  filter: drop-shadow(0 12px 12px rgb(0 0 0 / 0.26));
+  /* 去掉 drop-shadow：CodexPetDesk 在 WSLg/WebKitGTK 软渲染下会按元素
+     外接矩形生成黑影；完全透明/白底下柔和投影也显得多余，统一去掉。 */
+  filter: none;
   cursor: grab;
   touch-action: none;
   -webkit-user-drag: none;
