@@ -6,7 +6,7 @@ import { mountPetShell, type PetShell } from './pet-shell.js'
 import { createUiClient, type UiClient } from './ui-client.js'
 import { mountSettingsApp } from './settings-app.js'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
+import { invoke } from '@tauri-apps/api/core'
 import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi'
 import type { AppStateSnapshot, ActivitySnapshot, TrayItemSnapshot } from './controller.js'
 import { type ParsedPet } from '@yshark/pet-core'
@@ -62,10 +62,12 @@ if (kind === 'pet') {
         window.open('/?window=settings', '_blank')
         return
       }
-      const win = await WebviewWindow.getByLabel('settings')
-      if (win) {
-        await win.show()
-        await win.setFocus()
+      // Tauri：走 Rust 命令打开设置窗口——已存在则显示聚焦，
+      // 已被用户关闭则重新创建（右键菜单/托盘都能再次打开）。
+      try {
+        await invoke('open_settings_window')
+      } catch {
+        // 命令失败时静默（例如窗口创建被平台拒绝）。
       }
     }
 
