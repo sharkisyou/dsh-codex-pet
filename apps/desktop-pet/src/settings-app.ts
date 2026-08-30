@@ -177,6 +177,12 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   previewRenderer.setScale(0.6)
   previewRenderer.start()
 
+  // 完全加载后点击预览宠物：一次播放下一个动作，循环播放。
+  previewPet.addEventListener('click', () => {
+    if (!previewPet.classList.contains('is-loaded')) return
+    previewRenderer.playNextAnimation()
+  })
+
   // 缩放卡片
   const zoomSection = card('缩放')
   const zoomRow = h('div', 'zoom-row')
@@ -815,6 +821,12 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   hoverRenderer.setState('idle')
   hoverRenderer.setScale(0.85)
   hoverRenderer.start()
+
+  // 完全加载后点击悬停预览宠物：一次播放下一个动作，循环播放。
+  previewPanelPet.addEventListener('click', () => {
+    if (!previewPanelPet.classList.contains('is-loaded')) return
+    hoverRenderer.playNextAnimation()
+  })
 
   main.append(header, settingsPage, petsPage, marketPage)
 
