@@ -86,9 +86,9 @@ test('loads a pet with parsed metadata and data URL sprite', async () => {
       assert.equal(loaded.id, 'panda')
       assert.equal(loaded.pet.displayName, 'Pet panda')
       assert.equal(loaded.atlasRows, 2)
-      assert.equal(loaded.spriteMime, 'image/png')
       assert.ok(loaded.spriteDataUrl.startsWith('data:image/png;base64,'))
-      assert.ok(loaded.spriteBase64.length > 0)
+      // data URL 已包含 mime 与完整 base64（spriteBase64/spriteMime 字段已移除）
+      assert.ok(loaded.spriteDataUrl.length > 0)
     }
   } finally {
     await rm(root, { recursive: true, force: true })

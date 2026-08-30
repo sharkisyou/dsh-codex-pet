@@ -95,8 +95,7 @@ export interface AppController {
 export interface StoredPetRecord {
   pet: ParsedPet
   atlasRows: number
-  spriteBase64: string
-  spriteMime: string
+  /** 整张 sprite 的 data URL（含 mime 与 base64）。 */
   spriteDataUrl: string
 }
 

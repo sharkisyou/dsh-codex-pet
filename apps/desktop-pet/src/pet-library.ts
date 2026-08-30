@@ -40,8 +40,7 @@ export interface LoadedPetPackage {
   id: string
   pet: ParsedPet
   atlasRows: number
-  spriteBase64: string
-  spriteMime: string
+  /** 整张 sprite 的 data URL（含 mime 与 base64，可直接给 DOM/Canvas 渲染）。 */
   spriteDataUrl: string
 }
 
@@ -238,8 +237,6 @@ export function createPetLibrary(options: PetLibraryOptions = {}): PetLibrary {
             id,
             pet: parsed.pet,
             atlasRows,
-            spriteBase64: base64,
-            spriteMime: mime,
             spriteDataUrl: `data:${mime};base64,${base64}`,
           },
         }
