@@ -6,7 +6,7 @@
 
 桌宠需要一个真正的在线宠物市场：在应用内浏览 petdex.dev 的宠物并一键安装，而不是仅提供外部链接。实现前确认了三个关键事实：
 
-- petdex API：`https://petdex.crafter.run/api/manifest` 重定向到 `assets.petdex.dev/manifests/petdex-v1.json`，共 **4669** 只宠物，manifest 约 1.6MB；单宠物提供 `petJsonUrl` / `spritesheetUrl` / `zipUrl`。
+- petdex API：`https://assets.petdex.dev/manifests/petdex-v1.json`（旧地址 `petdex.crafter.run/api/manifest` 已 308 迁移至此，`petdex.dev/api/manifest` 307 同目标），共 **4669** 只宠物，manifest 约 1.6MB；单宠物提供 `petJsonUrl` / `spritesheetUrl` / `zipUrl`。
 - 安装必须写 `~/.codex/pets/<slug>/`：浏览器无法写文件系统，只能由 Node 服务端完成。
 - 浏览器（用户侧与本环境）**无法直接访问 petdex CDN**（代理/网络限制），因此任何依赖浏览器直连 CDN 的缩略图都会空白。
 

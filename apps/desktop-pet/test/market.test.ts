@@ -5,7 +5,7 @@ import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { createMarket, safeSlug } from '../src/market'
+import { createMarket, DEFAULT_MANIFEST_URL, safeSlug } from '../src/market'
 
 const require = createRequire(import.meta.url)
 const AdmZip = require('adm-zip')
@@ -42,6 +42,12 @@ test('safeSlug 只保留安全字符并拒绝路径穿越', () => {
   assert.equal(safeSlug('../etc'), 'etc')
   assert.equal(safeSlug(''), '')
   assert.equal(safeSlug('忍者-2'), '2') // 非 ascii 被剔除
+})
+
+test('默认 manifest URL 指向 assets.petdex.dev（petdex 已从 crafter.run 迁移）', () => {
+  // 旧地址 petdex.crafter.run/api/manifest 已 308 迁移到 assets.petdex.dev；
+  // 直连新域名省去重定向一跳，且与单宠物资源同源。
+  assert.equal(DEFAULT_MANIFEST_URL, 'https://assets.petdex.dev/manifests/petdex-v1.json')
 })
 
 test('listPets 过滤查询并分页', async () => {

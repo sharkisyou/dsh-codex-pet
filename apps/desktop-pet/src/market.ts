@@ -2,7 +2,7 @@
  * 在线宠物市场（petdex.dev）访问模块 —— 仅 Node 侧。
  *
  * 职责：
- * - 拉取并缓存市场 manifest（默认 https://petdex.crafter.run/api/manifest）
+ * - 拉取并缓存市场 manifest（默认 https://assets.petdex.dev/manifests/petdex-v1.json）
  * - 列出/搜索宠物
  * - 下载宠物包（zip 或 pet.json + spritesheet）并安装到 ~/.codex/pets/<slug>/
  *
@@ -21,7 +21,13 @@ const require = createRequire(import.meta.url)
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const AdmZip = require('adm-zip') as new (buffer: Buffer) => { extractAllTo(target: string, overwrite: boolean): void }
 
-export const DEFAULT_MANIFEST_URL = 'https://petdex.crafter.run/api/manifest'
+/**
+ * petdex manifest 直连地址（新域名）。旧地址 `https://petdex.crafter.run/api/manifest`
+ * 已 308 迁移到这里；`https://petdex.dev/api/manifest` 也 307 指向同一文件。
+ * 直连 assets 域名省去一跳重定向，且 manifest 与单宠物资源（sprite/petjson/zip）
+ * 都托管在 assets.petdex.dev。
+ */
+export const DEFAULT_MANIFEST_URL = 'https://assets.petdex.dev/manifests/petdex-v1.json'
 export const DEFAULT_USER_AGENT = 'dsh-pet-market/1.0'
 /** manifest 缓存时长：petdex 宠物变动不频繁，48 小时刷新一次足够。 */
 export const DEFAULT_CACHE_TTL_MS = 48 * 60 * 60 * 1000
