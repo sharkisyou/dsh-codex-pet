@@ -1266,6 +1266,24 @@ input {
   filter: drop-shadow(0 12px 12px rgb(15 23 42 / 0.26));
 }
 
+/* 详情占位缩略图：完整数据到达前的即时预览（复用列表缩略图首帧）。
+   与加载方框叠加：方框在外层，占位图在预览区居中。 */
+.market-detail-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 12px 12px rgb(15 23 42 / 0.26));
+}
+
+.market-detail-placeholder[hidden] {
+  display: none;
+}
+
 /* 详情宠物未加载时无占位框：加载反馈由 market-detail-loading 方框动画承担，
    避免出现"外层加载方框 + 内层虚线框"两层叠加。 */
 .market-detail-pet:not(.is-loaded) {

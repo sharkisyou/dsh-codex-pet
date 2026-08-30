@@ -351,7 +351,11 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   // 加载动画：蓝色方框从小到大扩张并淡出（循环），宠物数据到达后隐藏。
   const marketDetailLoading = h('div', 'market-detail-loading')
   const marketDetailPetEl = h('div', 'market-detail-pet')
-  marketDetailPreview.append(marketDetailLoading, marketDetailPetEl)
+  // 占位缩略图：详情数据未到达前，用已缓存的列表缩略图（sprite 首帧）即时预览，
+  // 避免等待 pet.json + 完整 sprite 下载期间预览区只有加载方框。
+  const marketDetailPlaceholder = h('div', 'market-detail-placeholder')
+  marketDetailPlaceholder.hidden = true
+  marketDetailPreview.append(marketDetailLoading, marketDetailPetEl, marketDetailPlaceholder)
   const marketDetailName = h('h3', 'market-detail-name', '')
   const marketDetailMeta = h('p', 'market-detail-meta', '')
   const marketDetailDesc = h('p', 'market-detail-desc', '')
@@ -419,6 +423,15 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     updateDetailInstall()
     marketDetailRenderer.setPet(null)
     marketDetailRenderer.setSprite(null)
+    // 详情数据未到达前，用已缓存的列表缩略图（sprite 首帧）作为即时占位预览；
+    // 数据到达后由 setMarketPet 隐藏。
+    const thumb = marketThumbCache.get(pet.slug)
+    if (thumb) {
+      marketDetailPlaceholder.style.backgroundImage = `url("${thumb}")`
+      marketDetailPlaceholder.hidden = false
+    } else {
+      marketDetailPlaceholder.hidden = true
+    }
     client.requestMarketPet(pet)
   }
 
@@ -426,6 +439,7 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     marketDetail.hidden = true
     detailPet = null
     hideMarketDetailLoading()
+    marketDetailPlaceholder.hidden = true
   }
 
   marketDetailClose.addEventListener('click', closeMarketDetail)
@@ -774,6 +788,8 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     marketDetailRenderer.setPet(payload.pet)
     marketDetailRenderer.setSprite(payload.spriteDataUrl)
     marketDetailDesc.textContent = payload.pet?.description ?? '（无描述）'
+    // 完整数据（或解析兜底）到达后，隐藏缩略图占位，交由动画渲染器接管预览。
+    marketDetailPlaceholder.hidden = true
     // 加载方框至少完整播放一轮再消失：数据秒到时，等动画走完剩余时间。
     const elapsed = Date.now() - marketDetailOpenedAt
     if (elapsed >= MARKET_LOAD_ANIM_MS) {
