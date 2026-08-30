@@ -18,14 +18,9 @@
 > 结论：**WSL 里直接交叉编译到 Windows 不可行**（缺 MSVC/MinGW 链接器、无 sudo 装不了工具链）；
 > **正确做法是 WSL 通过 interop 调用 Windows 原生 Rust 工具链编译**。已验证成功：透明窗口 + 完整宠物 + 正常运行。
 
-### 前置条件（Windows 侧，均已装好）
+### 前置条件
 
-| 组件 | 状态 | 说明 |
-|---|---|---|
-| Node 22 + npm | ✅ | fnm 管理（`C:\Users\weikang\AppData\Roaming\fnm\...`） |
-| Rust 1.98 (MSVC) | ✅ | `winget` 源失败时改用 rustup-init.exe 安装（下载自 win.rustup.rs） |
-| VS 2022 Community + MSVC | ✅ | `D:\Program Files\Microsoft Visual Studio\2022\Community`（vswhere 可查） |
-| WebView2 运行时 | ✅ | Tauri Windows 必需 |
+Windows 侧一次性环境已装好（Node、Rust MSVC、VS2022、WebView2），**勿重装**；装 Rust 勿用 winget（源不可用），用 rustup-init.exe。
 
 ### 构建（封装脚本）
 
