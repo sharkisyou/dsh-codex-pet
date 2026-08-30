@@ -65,6 +65,12 @@ export interface DomPetRenderer {
   playAnimation(name: string): void
   /** 轮播到下一个宠物包声明的点击动画并播放。 */
   playNextClickSkill(): string | null
+  /**
+   * 轮播到下一个动作并播放：优先宠物包声明的点击技能（clickAnimations），
+   * 未声明时轮播全部动画状态（idle/running/waving/jumping/...）。
+   * 点击一次播放下一个，循环播放。
+   */
+  playNextAnimation(): string | null
   getClickAnimation(): string | null
   render(now?: number): void
   start(): void
@@ -82,6 +88,30 @@ export function resolveAnimation(
   states: Record<string, PetAnimationState>,
 ): PetAnimationState | undefined {
   return states[animationNameForState(state)] ?? states.idle
+}
+
+/**
+ * 计算"点击一次后播放下一个动作"的名字（纯函数，便于测试）。
+ *
+ * 规则：
+ * - 宠物包声明了点击技能（clickAnimations 非空）→ 轮播声明列表（保持
+ *   "点击技能"语义；未在列表中时从头开始）。
+ * - 未声明 → 轮播全部动画状态（idle/running/waving/jumping/...），
+ *   点击一次播放下一个，循环播放；未在状态表中时从头开始。
+ * - 两者都为空 → null（无可播放动作）。
+ */
+export function nextAnimationName(
+  current: string | null | undefined,
+  clickAnimations: readonly string[] | null | undefined,
+  states: Record<string, PetAnimationState>,
+): string | null {
+  const declared = cycleNext(current, clickAnimations)
+  if (declared !== null) return declared
+  const all = Object.keys(states).filter((name) => states[name] !== undefined)
+  if (all.length === 0) return null
+  const index = all.indexOf(current as string)
+  if (index < 0) return all[0]
+  return all[(index + 1) % all.length]
 }
 
 export function createDomPetRenderer(
@@ -141,6 +171,7 @@ export function createDomPetRenderer(
     states = pet?.states ?? buildFallbackStates()
     clickAnimations = pet?.clickAnimations ?? []
     lastClickSkill = null
+    lastAnimation = null
     stateName = 'idle'
     frame = 0
     animationStartedAt = performance.now()
@@ -197,6 +228,19 @@ export function createDomPetRenderer(
     return next
   }
 
+  /** 所有动画状态的键（用于无点击声明时轮播全部动作）。 */
+  let lastAnimation: string | null = null
+
+  function playNextAnimation(): string | null {
+    // 宠物包声明了点击技能 → 优先轮播声明列表（保持原有"点击技能"语义）。
+    const next = nextAnimationName(lastAnimation, clickAnimations, states)
+    if (next !== null) {
+      lastAnimation = next
+      playAnimation(next)
+    }
+    return next
+  }
+
   function tick(): void {
     if (!running) return
     render()
@@ -242,6 +286,7 @@ export function createDomPetRenderer(
     getScale: () => scale,
     playAnimation,
     playNextClickSkill,
+    playNextAnimation,
     getClickAnimation: () => lastClickSkill,
     render,
     start,

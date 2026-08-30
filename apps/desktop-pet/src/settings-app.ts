@@ -381,6 +381,13 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   marketDetailRenderer.setScale(1.15)
   marketDetailRenderer.start()
 
+  // 完全加载后点击详情宠物：一次播放下一个动作，循环播放（点击技能优先，
+  // 未声明则轮播全部动作）。
+  marketDetailPetEl.addEventListener('click', () => {
+    if (!marketDetailPetEl.classList.contains('is-loaded')) return
+    marketDetailRenderer.playNextAnimation()
+  })
+
   let detailPet: MarketPet | null = null
 
   function updateDetailInstall(): void {    if (!detailPet) return

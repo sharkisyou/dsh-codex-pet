@@ -217,7 +217,9 @@ if (kind === 'pet') {
         dragStarted = false
         pressOnPet = false
         if (shouldClick) {
-          renderer.playNextClickSkill()
+          // 点击一次播放下一个动作：优先宠物包声明的点击技能，
+          // 未声明时轮播全部动作（idle/running/waving/jumping/...）。
+          renderer.playNextAnimation()
         }
       })
       stage.addEventListener('pointercancel', () => {

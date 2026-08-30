@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   ROWS,
   buildFallbackStates,
+  nextAnimationName,
   resolveAnimation,
 } from '../src/dom-pet-renderer'
 
@@ -44,4 +45,40 @@ test('resolves interaction states and falls back to idle', () => {
   // atlas 里没有对应行时也回落 idle。
   const partial = { idle: states.idle }
   assert.equal(resolveAnimation('running', partial)?.row, 0)
+})
+
+test('nextAnimationName 优先轮播宠物包声明的点击技能', () => {
+  const states = buildFallbackStates()
+  const clickAnims = ['waving', 'jumping']
+  assert.equal(nextAnimationName(null, clickAnims, states), 'waving')
+  assert.equal(nextAnimationName('waving', clickAnims, states), 'jumping')
+  assert.equal(nextAnimationName('jumping', clickAnims, states), 'waving') // 循环
+  assert.equal(nextAnimationName('unknown', clickAnims, states), 'waving') // 未知 → 从头
+})
+
+test('nextAnimationName 未声明点击技能时轮播全部动作（点击一下播放下一个）', () => {
+  const states = buildFallbackStates()
+  // 9 个标准动作：idle, running-right, running-left, waving, jumping,
+  // failed, waiting, running, review
+  const order = Object.keys(states).filter((n) => states[n] !== undefined)
+  assert.equal(order.length, 9)
+
+  // 从 null 开始 → 第一个动作
+  let next: string | null = nextAnimationName(null, [], states)
+  assert.equal(next, order[0])
+  // 依序轮播全部动作
+  for (let i = 1; i < order.length; i++) {
+    const current: string | null = next
+    next = nextAnimationName(current, [], states)
+    assert.equal(next, order[i], `从 ${current} 应轮到 ${order[i]}`)
+  }
+  // 最后一个动作后回到第一个（循环）
+  const last: string | null = next
+  next = nextAnimationName(last, [], states)
+  assert.equal(next, order[0], `从 ${last} 应循环回 ${order[0]}`)
+})
+
+test('nextAnimationName 空状态与空声明返回 null', () => {
+  assert.equal(nextAnimationName(null, [], {}), null)
+  assert.equal(nextAnimationName(null, null, {}), null)
 })
