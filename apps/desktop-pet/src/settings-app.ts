@@ -663,15 +663,17 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
 
   marketNext.addEventListener('click', () => {
     if (marketLoading) return
+    const pageSize = computeMarketPageSize()
+    const totalPages = Math.max(1, Math.ceil(marketTotal / pageSize))
     const next = marketCurrentPage + 1
+    // 防止越过最后一页（快速连点 / 按钮禁用状态滞后时仍会触发点击）。
+    if (next > totalPages) return
     // 命中预取缓存：秒显，不再请求服务端；随后继续预取再下一页。
     if (prefetchedPage === next && prefetchedResult) {
       marketPets = prefetchedResult.pets
       marketTotal = prefetchedResult.total
       marketCurrentPage = next
       marketLoading = false
-      const pageSize = computeMarketPageSize()
-      const totalPages = Math.max(1, Math.ceil(marketTotal / pageSize))
       marketStatus.textContent = `共 ${marketTotal} 个宠物`
       marketPageLabel.textContent = `第 ${marketCurrentPage} / ${totalPages} 页`
       ;(marketPrev as HTMLButtonElement).disabled = marketCurrentPage <= 1

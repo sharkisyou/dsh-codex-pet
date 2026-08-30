@@ -61,6 +61,8 @@ export interface AppControllerOptions {
   store: SettingsStore
   version?: string
   marketUrl?: string
+  /** 本地宠物加载缓存 LRU 上限（每个条目含完整 sprite data URL）。默认 60。 */
+  petCacheMax?: number
 }
 
 export interface AppController {
@@ -105,9 +107,14 @@ export function createAppController(options: AppControllerOptions): AppControlle
     store,
     version = '0.1.0',
     marketUrl = PET_MARKET_URL,
+    petCacheMax = 60,
   } = options
 
   const listeners = new Set<() => void>()
+  // 本地宠物加载缓存：每个条目含完整 sprite data URL（~2-4MB）。无界缓存
+  // 曾导致设置窗一次性请求全部本地宠物后服务端 JS heap OOM；加 LRU 上限。
+  // 单机宠物库通常 <60 只，上限取 60 足够覆盖正常使用。
+  const PET_CACHE_MAX = Math.max(1, petCacheMax)
   const petCache = new Map<string, LoadedPetPackage>()
   let petListCache: PetLibraryEntry[] | null = null
   let disposed = false
@@ -221,10 +228,21 @@ export function createAppController(options: AppControllerOptions): AppControlle
 
   async function loadPet(id: string): Promise<LoadedPetPackage | null> {
     const cached = petCache.get(id)
-    if (cached !== undefined) return cached
+    if (cached !== undefined) {
+      // 刷新 LRU 顺序：命中即移到队尾。
+      petCache.delete(id)
+      petCache.set(id, cached)
+      return cached
+    }
     const result = await library.loadPet(id)
     if (!result.ok) return null
     petCache.set(id, result.value)
+    // LRU 淘汰最久未用的条目，防止缓存无界增长。
+    while (petCache.size > PET_CACHE_MAX) {
+      const oldest = petCache.keys().next().value
+      if (oldest === undefined) break
+      petCache.delete(oldest)
+    }
     return result.value
   }
 

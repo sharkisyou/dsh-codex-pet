@@ -259,3 +259,59 @@ test('library/reload rescans and broadcasts new pets', async () => {
 test('exposes the internal UI path constant', () => {
   assert.equal(UI_PROTOCOL_PATH, '/v1/ui')
 })
+
+test('pet cache is LRU-bounded: evicted pets reload from disk, size stays capped', async () => {
+  // Regression: an unbounded pet cache (each entry holding a full sprite data
+  // URL) caused the server heap to OOM when the settings window loaded the
+  // whole local library. Verify the LRU cap evicts the oldest entry and that a
+  // later request still reloads the evicted pet correctly.
+  const libraryRoot = await makeTempDir()
+  const dataDir = await makeTempDir()
+  try {
+    // A pet set larger than the cache cap so eviction is exercised.
+    const PET_COUNT = 6
+    for (let i = 0; i < PET_COUNT; i++) {
+      await writePet(libraryRoot, `pet-${i}`)
+    }
+
+    const server = createPetServer({ logger: { info() {} } })
+    const library = createPetLibrary({ root: libraryRoot })
+    // Wrap loadPet to count actual disk reads (cache hits bypass it).
+    let diskReads = 0
+    const originalLoad = library.loadPet.bind(library)
+    library.loadPet = async (id: string) => {
+      diskReads += 1
+      return originalLoad(id)
+    }
+    const store = createSettingsStore({ dataDir })
+    // Small cap so the test drives eviction without loading 60 packages.
+    const controller = createAppController({ server, library, store, petCacheMax: 3 })
+
+    // Load pets in order; cache should hold at most 3 → pet-0..2 evicted.
+    for (let i = 0; i < PET_COUNT; i++) {
+      const loaded = await controller.loadPet(`pet-${i}`)
+      assert.ok(loaded, `pet-${i} should load`)
+    }
+    assert.equal(diskReads, PET_COUNT, 'first pass reads every pet from disk')
+
+    // pet-0 (oldest) was evicted → reloading it hits disk again.
+    const reloaded = await controller.loadPet('pet-0')
+    assert.ok(reloaded)
+    assert.equal(reloaded.id, 'pet-0')
+    assert.equal(diskReads, PET_COUNT + 1, 'evicted pet must re-read from disk')
+
+    // After loading pet-0 the cache holds {pet-4, pet-5, pet-0} (LRU order:
+    // pet-0 most recent, pet-4 oldest). Reloading those three must be pure
+    // cache hits — no disk reads.
+    const before = diskReads
+    for (const id of ['pet-0', 'pet-5', 'pet-4']) {
+      const loaded = await controller.loadPet(id)
+      assert.ok(loaded)
+      assert.equal(loaded.pet.displayName, `Pet ${id}`)
+    }
+    assert.equal(diskReads, before, 'recently cached pets must not re-read')
+  } finally {
+    await rm(libraryRoot, { recursive: true, force: true })
+    await rm(dataDir, { recursive: true, force: true })
+  }
+})
