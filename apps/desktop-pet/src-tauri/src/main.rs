@@ -4,35 +4,22 @@ use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Manager, WebviewUrl, WebviewWindowBuilder,
+    Manager,
 };
 
 /// 设置窗口的标签（与前端 invoke 约定一致）。
 const SETTINGS_WINDOW_LABEL: &str = "settings";
 
-/// 打开设置窗口：已存在则显示并聚焦；已被用户关闭（销毁）则重新创建。
-/// 前端右键菜单「设置」通过 invoke 调用此命令。
+/// 打开设置窗口：显示并聚焦。
+/// 窗口由 tauri.conf.json 声明（visible:false 启动隐藏），关闭时被拦截为
+/// 隐藏而非销毁，因此此处始终能找到并重新显示。
 #[tauri::command]
 fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
-        window.show().map_err(|e| e.to_string())?;
-        window.set_focus().map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-
-    WebviewWindowBuilder::new(
-        &app,
-        SETTINGS_WINDOW_LABEL,
-        WebviewUrl::App("index.html?window=settings".into()),
-    )
-    .title("桌宠设置")
-    .inner_size(520.0, 640.0)
-    .resizable(true)
-    .skip_taskbar(true)
-    .focused(true)
-    .build()
-    .map_err(|e| e.to_string())?;
-
+    let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) else {
+        return Err("设置窗口不存在".into());
+    };
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -63,7 +50,7 @@ fn main() {
                         }
                     }
                     "settings" => {
-                        // 托盘「设置」与右键菜单走同一命令：窗口被关后可重建。
+                        // 托盘「设置」与右键菜单走同一命令。
                         let _ = open_settings_window(app.clone());
                     }
                     "quit" => {
@@ -73,6 +60,19 @@ fn main() {
                 });
 
             let _tray = tray.build(app)?;
+
+            // 设置窗口「关闭」改为隐藏而非销毁：这样右键菜单/托盘再次打开时
+            // 窗口仍存在（get_webview_window 可命中），避免动态重建的 URL 问题。
+            if let Some(settings_window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
+                let window = settings_window.clone();
+                settings_window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![open_settings_window])

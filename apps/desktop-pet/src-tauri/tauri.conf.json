@@ -26,6 +26,15 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "resizable": true
+      },
+      {
+        "label": "settings",
+        "title": "桌宠设置",
+        "url": "index.html?window=settings",
+        "width": 520,
+        "height": 640,
+        "visible": false,
+        "resizable": true
       }
     ],
     "security": {
