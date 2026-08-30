@@ -420,9 +420,16 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     marketDetailLoading.hidden = true
   }
 
+  // 打开时间戳：用于防止"打开瞬间的第二次点击"误关（双击/快速连点卡片时，
+  // 第二下 click 落在刚覆盖的遮罩上会把弹窗立刻关掉）。
+  let marketDetailOpenedAtMs = 0
+  /** 打开后此窗口内点击遮罩不关闭（双击第二下的最小间隔）。 */
+  const MARKET_DETAIL_OPEN_DEBOUNCE_MS = 350
+
   function openMarketDetail(pet: MarketPet): void {
     detailPet = pet
     marketDetail.hidden = false
+    marketDetailOpenedAtMs = Date.now()
     marketDetailName.textContent = pet.displayName
     marketDetailMeta.textContent = [pet.kind, pet.submittedBy ? `by ${pet.submittedBy}` : ''].filter(Boolean).join(' · ') || pet.slug
     // 描述区留空；加载反馈由预览区的蓝色方框动画承担。
@@ -457,7 +464,10 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
 
   marketDetailClose.addEventListener('click', closeMarketDetail)
   marketDetail.addEventListener('click', (event) => {
-    if (event.target === marketDetail) closeMarketDetail()
+    if (event.target !== marketDetail) return
+    // 打开后极短时间内遮罩上的点击视为"双击的第二下"，忽略避免误关。
+    if (Date.now() - marketDetailOpenedAtMs < MARKET_DETAIL_OPEN_DEBOUNCE_MS) return
+    closeMarketDetail()
   })
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !marketDetail.hidden) closeMarketDetail()
