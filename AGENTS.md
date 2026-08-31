@@ -43,8 +43,14 @@ Windows 侧一次性环境已装好（Node、Rust MSVC、VS2022、WebView2），
   `npx tauri icon src-tauri/icons/icon.png` 生成。WSL/Linux 构建不需要它。
 - **增量编译**：`extract` 会重建工作目录，因此日常改代码后用 `build`（复用 Windows 侧已有 target/node_modules）
   而非 `all`，可跳过 deps 直接增量编译。
-- **数据源**：Windows 桌宠通过 WSL2 `localhost` 转发连 `ws://127.0.0.1:3720`（pet server，监听 0.0.0.0）。
+- **数据源**：Windows 桌宠通过 WSL2 `localhost` 转发连 `ws://127.0.0.1:3720`（pet server）。
   WSL 的 Vite（1420）+ pet server（3720）需保持运行，否则窗口空白。
+  - **连不连得到与 `PET_SERVER_HOST` 无关**：现代 WSL2（.wslconfig 含 dnsTunneling/autoProxy，
+    内核 6.18+）的 localhost relay 会把 Windows 的 `127.0.0.1:3720` 直接桥接到 WSL 回环监听——
+    即使 pet server 只绑 `127.0.0.1`（默认），Windows 桌宠也能连（已实测：收到真实 state 响应）。
+  - **`PET_SERVER_HOST=0.0.0.0` 的作用**：让 WSL 的 pet server 也监听局域网接口，
+    使浏览器通过局域网 IP 预览（`http://172.20.169.96:1420/` 连 `172.20.169.96:3720`）能连上；
+    Windows 桌宠本身靠 localhost relay 即可，不设也能连。
 - **调试捕获**：验证 Windows 桌宠渲染用 `PrintWindow` 截窗口（透明区域会呈黑色假象，不代表真的黑底）。
   视觉验证用 `~/.dsh/skills/vision.md` 的 Muse Spark 多模态模型分析截图。
 - **WSL 交叉编译不可行**：勿浪费时间尝试 `--target x86_64-pc-windows-msvc`（无 link.exe）或 MinGW（无 sudo）。
