@@ -13,6 +13,7 @@ import { createSettingsStore } from './settings-store.js'
 import { createAppController } from './controller.js'
 import { createUiGateway, UI_PROTOCOL_PATH } from './ui-gateway.js'
 import { createMarket } from './market.js'
+import { ensureBridgePlugin } from './ensure-bridge-plugin.js'
 
 const library = createPetLibrary()
 const store = createSettingsStore()
@@ -46,6 +47,8 @@ server.start()
     const address = server.address()
     console.log(`[desktop-pet] WebSocket server listening on ws://${server.host}:${address?.port ?? server.port}${server.path}`)
     console.log(`[desktop-pet] UI control channel on ws://${server.host}:${address?.port ?? server.port}${UI_PROTOCOL_PATH}`)
+    // 确保 DSH 桥接插件已安装（自动，非阻塞；失败不影响服务）。
+    void ensureBridgePlugin()
   })
   .catch((error) => {
     console.error('[desktop-pet] failed to start WebSocket server', error)
