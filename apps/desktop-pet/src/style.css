@@ -188,6 +188,12 @@ input {
   backdrop-filter: blur(8px);
 }
 
+/* 覆盖 UA 的 [hidden]：作者样式里的 display 会压过 hidden 属性，
+ * 不加这条的话无活动时角标仍会显示。 */
+.activity-tray-toggle[hidden] {
+  display: none;
+}
+
 .activity-tray-toggle .tray-count {
   font-weight: 600;
   line-height: 1;
