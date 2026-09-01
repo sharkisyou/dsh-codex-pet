@@ -113,10 +113,12 @@ if (kind === 'pet') {
         trayOpen = false
         return
       }
-      // 有活动会话：角标常驻；收起时向下三角，展开时向上三角（点击开/关）
+      // 有活动会话：角标常驻（数字 + 三角）；收起时向下三角，展开时向上三角（点击开/关）
       trayToggle.hidden = false
       trayToggle.classList.toggle('open', trayOpen)
       trayToggle.title = trayOpen ? '收起活动列表' : '展开活动列表'
+      const count = trayToggle.querySelector<HTMLElement>('.tray-count')
+      if (count) count.textContent = String(trayItems.length)
       if (!trayOpen) {
         trayBox.hidden = true
         return
@@ -166,6 +168,12 @@ if (kind === 'pet') {
         renderTray()
       })
     }
+
+    // 托盘区（角标 + 列表）不参与宠物窗的窗口拖动：阻止 pointerdown 冒泡到
+    // stage，否则 stage 的 setPointerCapture 会把真实点击的 click 重定向到
+    // stage，导致角标开/关与列表项点击失效（真实鼠标点击才触发）。
+    const trayWrap = document.querySelector<HTMLElement>('#activity-tray-wrap')
+    trayWrap?.addEventListener('pointerdown', (event) => event.stopPropagation())
 
     /* ---------- 窗口位置持久化 ---------- */
 
