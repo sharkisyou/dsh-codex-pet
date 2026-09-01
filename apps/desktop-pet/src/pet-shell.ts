@@ -105,15 +105,25 @@ export function mountPetShell(options: PetShellOptions): PetShell {
     }, MOVE_SETTLE_MS)
   }
 
-  function showBubble({ title = '', message = '', state, timeout = BUBBLE_DEFAULT_TIMEOUT }: SpeechBubbleOptions = {}): void {
+  /**
+   * 显示气泡。默认不自动消失（timeout=0）：气泡随活动状态常驻，由下一次
+   * showBubble 更新内容、宿主在空闲时调用 hideBubble 清除。传入 timeout>0
+   * 仍可要求定时自动隐藏（例如其他调用方）。
+   */
+  function showBubble({ title = '', message = '', state, timeout = 0 }: SpeechBubbleOptions = {}): void {
     bubbleEl.innerHTML = `
       <strong>${escapeHtml(title)}</strong>
       <span>${escapeHtml(message)}</span>
     `
     bubbleEl.closest('.shell')?.classList.add('has-bubble')
     if (state) renderer.setState(state)
-    if (bubbleTimer !== null) clearTimeout(bubbleTimer)
-    bubbleTimer = setTimeout(hideBubble, timeout)
+    if (bubbleTimer !== null) {
+      clearTimeout(bubbleTimer)
+      bubbleTimer = null
+    }
+    if (Number.isFinite(timeout) && timeout > 0) {
+      bubbleTimer = setTimeout(hideBubble, timeout)
+    }
   }
 
   function hideBubble(): void {

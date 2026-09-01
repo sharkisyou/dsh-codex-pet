@@ -298,6 +298,9 @@ if (kind === 'pet') {
           message: bubbleText(key, activity.bubbleParams),
           state: lastActivityState,
         })
+      } else {
+        // 空闲/无气泡状态：清除残留气泡（气泡已改为随状态常驻，不再 8.5s 自动消失）
+        shell.hideBubble()
       }
     }
 
