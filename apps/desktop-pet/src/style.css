@@ -1638,24 +1638,6 @@ body.tray-window #window-content {
   white-space: nowrap;
 }
 
-.tray-window-close {
-  flex: none;
-  width: 22px;
-  height: 22px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: rgb(255 255 255 / 0.75);
-  font-size: 12px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.tray-window-close:hover {
-  background: rgb(255 255 255 / 0.12);
-  color: #fff;
-}
-
 .tray-window-list {
   flex: 1;
   min-height: 0;
@@ -1664,6 +1646,12 @@ body.tray-window #window-content {
   flex-direction: column;
   gap: 2px;
   padding: 6px;
+  /* 隐藏滚动条：高度已随内容自适应，滚动条仅作保底 */
+  scrollbar-width: none;
+}
+
+.tray-window-list::-webkit-scrollbar {
+  display: none;
 }
 
 .tray-window-empty {

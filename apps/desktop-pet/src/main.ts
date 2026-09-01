@@ -426,7 +426,7 @@ if (kind === 'pet') {
 /**
  * 独立活动托盘窗口（Tauri 的 label=tray 窗口）。
  * 渲染活动列表：标题 + 来源 + 状态标签，未读蓝点；点击项标记已读并打开 DSH 会话，
- * 托盘保持打开（便于连续切换会话）。关闭按钮隐藏本窗口。
+ * 托盘保持打开（便于连续切换会话）。通过宠物窗角标收起本窗口。
  */
 function mountTrayWindow(): void {
   if (!content) return
@@ -442,22 +442,13 @@ function mountTrayWindow(): void {
   count.className = 'tray-count'
   count.textContent = '0'
   title.append('活动 (', count, ')')
-  const close = document.createElement('button')
-  close.type = 'button'
-  close.className = 'tray-window-close'
-  close.title = '关闭'
-  close.textContent = '✕'
-  header.append(title, close)
+  header.append(title)
 
   const list = document.createElement('div')
   list.className = 'tray-window-list'
 
   root.append(header, list)
   content.append(root)
-
-  close.addEventListener('click', () => {
-    if (isTauri()) void invoke('set_tray_window_visible', { visible: false })
-  })
 
   function showEmpty(text: string): void {
     list.innerHTML = ''
@@ -468,18 +459,23 @@ function mountTrayWindow(): void {
   }
 
   // 托盘窗口高度随活动会话数量增减：测量内容高度后调 resize_tray_window。
+  // 测量按实际布局精确计算（header + 列表上下 padding + 各项高 + 项间距），
+  // 并留 4px 余量，避免窗口比内容矮几像素而出现滚动条。
   let fitTimer: ReturnType<typeof setTimeout> | null = null
   function fitHeight(): void {
     if (!isTauri()) return
     if (fitTimer !== null) clearTimeout(fitTimer)
     fitTimer = setTimeout(() => {
       fitTimer = null
-      let content = header.offsetHeight + 6 // 列表上下 padding
-      for (const item of list.querySelectorAll<HTMLElement>('.activity-tray-item')) {
-        content += item.offsetHeight + 2 // 项高 + 间距
-      }
-      const empty = list.querySelector('.tray-window-empty')
-      if (empty) content += (empty as HTMLElement).offsetHeight + 12
+      const items = list.querySelectorAll<HTMLElement>('.activity-tray-item')
+      const empty = list.querySelector<HTMLElement>('.tray-window-empty')
+      const LIST_PAD = 12 // 列表上下 padding 各 6px
+      const ITEM_GAP = 2
+      let content = header.offsetHeight + LIST_PAD + 4
+      items.forEach((item, index) => {
+        content += item.offsetHeight + (index < items.length - 1 ? ITEM_GAP : 0)
+      })
+      if (empty) content += (empty as HTMLElement).offsetHeight + LIST_PAD
       if (content <= 0) return
       void invoke('resize_tray_window', { height: Math.round(content) })
     }, 80)
