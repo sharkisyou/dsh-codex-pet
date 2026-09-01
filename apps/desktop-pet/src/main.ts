@@ -1,6 +1,5 @@
 import './style.css'
 import { detectWindowKind } from './window-kind.js'
-import { bubbleText } from './renderer.js'
 import { createDomPetRenderer } from './dom-pet-renderer.js'
 import { mountPetShell, type PetShell } from './pet-shell.js'
 import { createUiClient, type UiClient } from './ui-client.js'
@@ -31,7 +30,6 @@ if (kind === 'pet') {
   const petEl = document.querySelector<HTMLElement>('#pet')
   const status = document.querySelector<HTMLParagraphElement>('#pet-status')
   const stage = document.querySelector<HTMLElement>('#pet-stage')
-  const bubbleEl = document.querySelector<HTMLElement>('#speech-bubble')
   const contextMenuEl = document.querySelector<HTMLElement>('#pet-context-menu')
   const trayToggle = document.querySelector<HTMLButtonElement>('#activity-tray-toggle')
   const trayBox = document.querySelector<HTMLElement>('#activity-tray')
@@ -78,7 +76,8 @@ if (kind === 'pet') {
 
     const shell: PetShell = mountPetShell({
       element: petEl,
-      bubbleEl: bubbleEl ?? document.createElement('div'),
+      // 气泡功能已移除；pet-shell 仍要求一个 bubbleEl，传一个无用的离屏 div。
+      bubbleEl: document.createElement('div'),
       contextMenuEl,
       getScale: () => zoom,
       setScale: (next) => {
@@ -88,7 +87,6 @@ if (kind === 'pet') {
       renderer,
       onOpenSettings: openSettingsWindow,
       onHide: hidePetWindow,
-      onBubbleHide: () => renderer.setState(lastActivityState),
     })
 
     /* ---------- 活动托盘 ---------- */
@@ -109,13 +107,16 @@ if (kind === 'pet') {
       if (!trayBox || !trayToggle) return
       trayBox.innerHTML = ''
       if (trayItems.length === 0) {
+        // 无活动会话：托盘与角标全部消失
         trayToggle.hidden = true
         trayBox.hidden = true
         trayOpen = false
         return
       }
+      // 有活动会话：角标常驻；收起时向下三角，展开时向上三角（点击开/关）
       trayToggle.hidden = false
-      trayToggle.textContent = `活动 (${trayItems.length})`
+      trayToggle.textContent = trayOpen ? '▲' : '▼'
+      trayToggle.title = trayOpen ? '收起活动列表' : '展开活动列表'
       if (!trayOpen) {
         trayBox.hidden = true
         return
@@ -149,7 +150,13 @@ if (kind === 'pet') {
     }
 
     function applyTray(activities: TrayItemSnapshot[]): void {
-      trayItems = activities ?? []
+      const next = activities ?? []
+      const hadAny = trayItems.length > 0
+      trayItems = next
+      // 无活动 → 有活动：自动展开一次；之后保持用户的开/关选择，不再自动弹开
+      if (next.length > 0 && !hadAny) {
+        trayOpen = true
+      }
       renderTray()
     }
 
@@ -289,19 +296,9 @@ if (kind === 'pet') {
     }
 
     function applyActivity(activity: ActivitySnapshot): void {
+      // 气泡功能已移除：只保留宠物动画状态跟随（气泡文案不再渲染）。
       lastActivityState = activity.displayState || 'idle'
       renderer.setState(lastActivityState)
-      const key = activity.bubbleKey
-      if (key && key !== 'idle') {
-        shell.showBubble({
-          title: activity.agent ?? '桌宠',
-          message: bubbleText(key, activity.bubbleParams),
-          state: lastActivityState,
-        })
-      } else {
-        // 空闲/无气泡状态：清除残留气泡（气泡已改为随状态常驻，不再 8.5s 自动消失）
-        shell.hideBubble()
-      }
     }
 
     function applyState(state: AppStateSnapshot): void {

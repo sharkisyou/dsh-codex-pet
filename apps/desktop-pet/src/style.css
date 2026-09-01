@@ -85,71 +85,6 @@ input {
   height: 100%;
 }
 
-/* 说话气泡（DOM 版，替代 Canvas 内绘制） */
-.speech-bubble {
-  position: absolute;
-  top: 6px;
-  left: 50%;
-  z-index: 2;
-  display: grid;
-  gap: 2px;
-  width: 252px;
-  max-height: 72px;
-  padding: 8px 10px;
-  border: 1px solid rgb(0 0 0 / 0.08);
-  border-radius: 14px;
-  color: #111827;
-  background: rgb(255 255 255 / 0.94);
-  box-shadow: 0 10px 28px rgb(15 23 42 / 0.18);
-  font-size: 12px;
-  line-height: 1.28;
-  opacity: 0;
-  overflow: hidden;
-  pointer-events: none;
-  text-align: left;
-  transform: translate(-50%, -8px);
-  transition: opacity 160ms ease, transform 160ms ease;
-}
-
-/* 气泡小尾巴（指向下方的宠物） */
-.speech-bubble::after {
-  content: "";
-  position: absolute;
-  bottom: -5px;
-  left: 50%;
-  width: 12px;
-  height: 12px;
-  border-right: 1px solid rgb(0 0 0 / 0.08);
-  border-bottom: 1px solid rgb(0 0 0 / 0.08);
-  background: rgb(255 255 255 / 0.94);
-  transform: translateX(-50%) rotate(45deg);
-}
-
-.speech-bubble strong,
-.speech-bubble span {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  overflow-wrap: anywhere;
-}
-
-.speech-bubble strong {
-  color: #111827;
-  font-size: 13px;
-  font-weight: 800;
-  -webkit-line-clamp: 1;
-}
-
-.speech-bubble span {
-  color: rgb(17 24 39 / 0.78);
-  -webkit-line-clamp: 2;
-}
-
-.shell.has-bubble .speech-bubble {
-  opacity: 1;
-  transform: translate(-50%, 0);
-}
-
 /* 宠物（DOM 精灵渲染，CodexPetDesk 同款） */
 .pet {
   position: absolute;
@@ -254,21 +189,25 @@ input {
   z-index: 3;
 }
 
+/* 收起时的向下三角 / 展开时的向上三角角标（点击开/关托盘） */
 .activity-tray-toggle {
-  padding: 3px 10px;
-  border-radius: 999px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
   border: 1px solid rgb(255 255 255 / 0.45);
-  background: rgb(15 23 42 / 0.42);
+  background: rgb(15 23 42 / 0.5);
   color: #fff;
-  text-shadow: 0 1px 3px rgb(0 0 0 / 0.85);
-  font: inherit;
-  font-size: 0.78rem;
+  font-size: 0.6rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   backdrop-filter: blur(8px);
 }
 
 .activity-tray-toggle:hover {
-  background: rgb(15 23 42 / 0.62);
+  background: rgb(15 23 42 / 0.72);
 }
 
 .activity-tray {
