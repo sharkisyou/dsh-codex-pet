@@ -1596,7 +1596,8 @@ input {
 
 body.tray-window {
   margin: 0;
-  background: rgb(20 24 30 / 0.96);
+  /* 窗口本身透明：圆角由内部面板提供（圆角外透出桌面） */
+  background: transparent;
   color: #eee;
   overflow: hidden;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -1612,6 +1613,10 @@ body.tray-window #window-content {
   flex-direction: column;
   height: 100vh;
   box-sizing: border-box;
+  /* 圆角矩形面板：圆角外为透明窗口区域 */
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgb(20 24 30 / 0.96);
 }
 
 .tray-window-header {
