@@ -1685,6 +1685,16 @@ body.tray-window .pet-context-menu {
   display: none;
 }
 
+/* 托盘窗口：shell 用 block 布局（不用 grid），否则内容（长会话 ID 不换行）
+   会把 grid 列撑到超过窗口宽度，右侧圆角被窗口裁成直角。 */
+.shell--tray {
+  display: block;
+  overflow: hidden;
+}
+
 body.tray-window #window-content {
   display: block;
+  height: 100vh;
+  min-width: 0;
+  overflow: hidden;
 }
