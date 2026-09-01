@@ -64,10 +64,6 @@ input {
   height: 100vh;
 }
 
-.shell--pet .pet-status {
-  display: block;
-}
-
 .shell--settings .pet-stage {
   display: none;
 }
@@ -88,7 +84,8 @@ input {
 /* 宠物（DOM 精灵渲染，CodexPetDesk 同款） */
 .pet {
   position: absolute;
-  bottom: 4px;
+  /* 上移留出底部空间给活动角标（角标锚定在宠物下方、不遮挡宠物） */
+  bottom: 44px;
   left: 50%;
   z-index: 1;
   image-rendering: pixelated;
@@ -122,24 +119,6 @@ input {
       transparent 8px 16px
     );
   filter: none;
-}
-
-/* 连接状态小条（桌宠窗口左下角） */
-.pet-status {
-  position: absolute;
-  bottom: 4px;
-  left: 8px;
-  z-index: 1;
-  display: none;
-  margin: 0;
-  padding: 2px 8px;
-  border-radius: 999px;
-  color: rgb(247 242 232 / 0.82);
-  background: rgb(15 23 42 / 0.42);
-  font-size: 10px;
-  line-height: 1.5;
-  pointer-events: none;
-  backdrop-filter: blur(8px);
 }
 
 /* 右键菜单 */

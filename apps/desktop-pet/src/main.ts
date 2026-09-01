@@ -28,7 +28,6 @@ function currentTauriWindow(): ReturnType<typeof getCurrentWindow> | null {
 
 if (kind === 'pet') {
   const petEl = document.querySelector<HTMLElement>('#pet')
-  const status = document.querySelector<HTMLParagraphElement>('#pet-status')
   const stage = document.querySelector<HTMLElement>('#pet-stage')
   const contextMenuEl = document.querySelector<HTMLElement>('#pet-context-menu')
   const trayToggle = document.querySelector<HTMLButtonElement>('#activity-tray-toggle')
@@ -37,10 +36,6 @@ if (kind === 'pet') {
     const renderer = createDomPetRenderer(petEl)
     renderer.setState('idle')
     renderer.start()
-
-    function updateStatus(text: string): void {
-      if (status) status.textContent = text
-    }
 
     let selectedPetId: string | null = null
     let zoom = 1.2
@@ -313,9 +308,6 @@ if (kind === 'pet') {
       applySettings(state.settings)
       applyActivity(state.activity)
       applyTray(state.tray ?? state.activities ?? [])
-      updateStatus(state.agents.length > 0
-        ? `来源：${state.agents.join('、')}`
-        : '等待桥接连接')
     }
 
     const client: UiClient = createUiClient({
@@ -325,22 +317,19 @@ if (kind === 'pet') {
           applySettings(settings)
           applyActivity(activity)
           applyTray(tray ?? activities ?? [])
-          updateStatus(agents.length > 0
-            ? `来源：${agents.join('、')}`
-            : '等待桥接连接')
         },
         onPet({ id, pet, spriteDataUrl }) {
           if (id === selectedPetId) {
             renderer.setPet(pet as ParsedPet)
             renderer.setSprite(spriteDataUrl)
-            if (status) status.textContent = '浏览器预览 · 已连接'
           }
         },
         onError(message) {
-          updateStatus(`连接错误：${message}`)
+          // 状态胶囊已移除；连接错误仅记录
+          console.error('[desktop-pet] 连接错误：', message)
         },
         onStatus(connected) {
-          if (!connected) updateStatus('正在连接桌宠服务…')
+          if (!connected) console.warn('[desktop-pet] 正在连接桌宠服务…')
         },
       },
     })
