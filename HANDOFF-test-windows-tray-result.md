@@ -138,3 +138,52 @@
   或从溢出区拖出。
 - 若后续 DSH 再次升级：核对 `API_REMOTE_FORWARDED_EVENTS` 是否仍含 `session/open`；
   桥接插件事件名核对表见第 3 节。
+
+---
+
+## 8. DSH 0.1.2-alpha.3 复测结果（2026-09-01）
+
+DSH 升级到 **0.1.2-alpha.3** 后的完整复测结论：**托盘核心链路全部通过，无需改仓库代码**。
+
+### 8.1 alpha 版变化（对桥接插件的影响）
+
+| 项 | rc.2 | alpha.3 | 影响 |
+|---|---|---|---|
+| `API_REMOTE_FORWARDED_EVENTS` 格式 | 字符串数组 | `[{event, mode}]` 数组，`mode: emit\|waterfall` | allowlist 补丁需按新格式重打；已重打 |
+| `dsh-host-apiproxy` | 存在（转发 host/remote-event） | 删除，改为 `dsh-api-gateway` + typert `$events` 流 | 桥接插件不直接依赖，无影响 |
+| `ctx.remote.$on`（客户端） | 存在 | 仍存在（`ClientRemoteService.$on`） | client.js 无需改 |
+| `ctx.get('sessions').open(id)`（客户端） | 存在 | 仍存在（`dsh-api-session-controller` 提供） | client.js 无需改 |
+| `dsh-client-runtime` | 存在 | 删除（职责并入 connection/session-controller） | 插件只注入服务名，无影响 |
+| 宿主事件载荷（`agent/status` 等 fused `agent` 对象） | 对象 | 不变（`agentEvents` fused 仍在） | 桥接 `sessionIdOf(payload.agent).id` 仍有效 |
+| `approval/request` | 宿主内 waterfall | 进入 allowlist（`mode: waterfall` 转发到客户端） | 不影响桥接（桥接仍在宿主侧监听） |
+
+### 8.2 复测项与结果（均实测）
+
+| 项 | 结果 |
+|---|---|
+| 桥接插件在 alpha 加载并连上 pet server | ✅ `connected:true` |
+| 实时数据流（本会话工具调用 → 托盘） | ✅ `dsh · 运行中` + 气泡 `执行工具: bash` |
+| 全状态映射（合成事件） | ✅ approval→需要输入、question→需要输入、error→受阻、running→运行中 |
+| 浏览器托盘渲染（Vite 1420） | ✅ 按钮 `活动 (N)` 可见、项带状态标签 |
+| Windows 桌宠托盘（WebView2 CDP） | ✅ `活动 (1)`、`dsh · 运行中`、气泡实时数据 |
+| 插件测试 | ✅ 21 项全过 |
+| 桌宠测试 | ✅ 65 项全过 |
+| allowlist 补丁 | ✅ 已按新格式重打（`lib/index.js` + `lib/types/remote-events.js`） |
+
+### 8.3 待办
+
+- **重启 `dsh web` 一次**以激活重打的 allowlist（当前进程仍是旧 allowlist）。
+  重启后托盘点击 → 打开 DSH 会话的完整链路生效（client.js 已随页面刷新加载新逻辑）。
+  其余功能不依赖该重启，均已生效。
+- GUI 页面（3080）在 alpha 下首页返回 401（浏览器信任栅栏行为变化），属 GUI 自身问题，
+  不影响 pet server/桥接/托盘链路。
+
+### 8.4 重启后完整链路验证（已通过）
+
+- `dsh web` 已重启（PID 43354，`--no-open`），allowlist 生效。
+- **托盘点击 → 打开 DSH 会话** 端到端验证：
+  - 经 pet server `/v1/ui` 发 `tray/open`（目标 `session-079f8d20-…`）
+    → 桥接 `ctx.emit('session/open')` → dsh-api-remotes 新格式 allowlist 转发
+    → 客户端 `remote.$on` → `sessions.open()` → **GUI 实际切换到该会话**（浏览器实测内容切换）。
+  - 再发 `tray/open` 回本会话，GUI 切回，往返正常。
+- alpha 浏览器信任：GUI 首页 URL 带 `?token=…`（`dsh web` 启动日志打印），带 token 访问即 200。
