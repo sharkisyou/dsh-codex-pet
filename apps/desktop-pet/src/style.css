@@ -181,16 +181,15 @@ input {
   outline: none;
 }
 
-/* 活动托盘（桌宠窗口，锚定在宠物头部上方，多会话活动入口） */
+/* 活动托盘（桌宠窗口）：角标锚定在宠物下方（底部），列表在宠物上方（顶部）展开 */
 .activity-tray-wrap {
   position: absolute;
-  top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
+  bottom: 8px;
+  left: 0;
+  right: 0;
   z-index: 3;
   display: flex;
-  flex-direction: column;
-  align-items: center;
+  justify-content: center;
 }
 
 /* 角标：胶囊形按钮 = 活动数量数字 + 纯 CSS 三角；收起时向下 ▼，展开时向上 ▲ */
@@ -234,8 +233,8 @@ input {
 }
 
 .activity-tray {
-  position: absolute;
-  top: calc(100% + 8px);
+  position: fixed;
+  top: 10px;
   left: 50%;
   transform: translateX(-50%);
   width: min(320px, calc(100vw - 24px));
@@ -249,7 +248,6 @@ input {
   border-radius: 12px;
   background: rgb(20 24 30 / 0.94);
   color: #eee;
-  box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
   backdrop-filter: blur(16px);
 }
 
