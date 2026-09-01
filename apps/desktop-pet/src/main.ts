@@ -467,6 +467,24 @@ function mountTrayWindow(): void {
     list.append(empty)
   }
 
+  // 托盘窗口高度随活动会话数量增减：测量内容高度后调 resize_tray_window。
+  let fitTimer: ReturnType<typeof setTimeout> | null = null
+  function fitHeight(): void {
+    if (!isTauri()) return
+    if (fitTimer !== null) clearTimeout(fitTimer)
+    fitTimer = setTimeout(() => {
+      fitTimer = null
+      let content = header.offsetHeight + 6 // 列表上下 padding
+      for (const item of list.querySelectorAll<HTMLElement>('.activity-tray-item')) {
+        content += item.offsetHeight + 2 // 项高 + 间距
+      }
+      const empty = list.querySelector('.tray-window-empty')
+      if (empty) content += (empty as HTMLElement).offsetHeight + 12
+      if (content <= 0) return
+      void invoke('resize_tray_window', { height: Math.round(content) })
+    }, 80)
+  }
+
   const client = createUiClient({
     handlers: {
       onState(state) {
@@ -489,12 +507,14 @@ function mountTrayWindow(): void {
     count.textContent = String(listItems.length)
     if (listItems.length === 0) {
       showEmpty('暂无活动')
+      fitHeight()
       return
     }
     renderTrayItems(list, listItems, (agent, sessionId) => {
       // 标记已读 + 打开 DSH 会话；托盘窗口保持打开
       client.openTrayItem(agent, sessionId, 'tray')
     })
+    fitHeight()
   }
 
   ;(window as any).__desktopPetTray = { client, apply }

@@ -27,7 +27,8 @@ fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 把托盘窗口定位到宠物窗口旁边（优先右侧），保证不覆盖宠物窗口。
+/// 把托盘窗口定位到宠物窗口正上方（水平与宠物对齐）；上方放不下时放下方。
+/// 永远不与宠物窗口重叠，且不做左右翻边。
 fn position_tray_window(app: &tauri::AppHandle) {
     let Some(pet) = app.get_webview_window("pet") else { return };
     let Some(tray) = app.get_webview_window(TRAY_WINDOW_LABEL) else { return };
@@ -47,28 +48,51 @@ fn position_tray_window(app: &tauri::AppHandle) {
     let right_limit = if screen_w > 0 { screen_x + screen_w } else { i32::MAX };
     let bottom_limit = if screen_h > 0 { screen_y + screen_h } else { i32::MAX };
 
-    // 优先放在宠物右侧；右侧放不下且左侧有空位时放左侧。
     let tray_w = tray_size.width as i32;
     let tray_h = tray_size.height as i32;
-    let right_x = pet_pos.x + pet_size.width as i32 + TRAY_GAP_PX;
-    let left_x = pet_pos.x - tray_w - TRAY_GAP_PX;
-    let mut x = right_x;
-    if right_x + tray_w > right_limit && left_x >= screen_x {
-        x = left_x;
+
+    // 垂直：优先在宠物上方；上方放不下时放下方；都不行则钳制在屏幕内。
+    let above_y = pet_pos.y - tray_h - TRAY_GAP_PX;
+    let below_y = pet_pos.y + pet_size.height as i32 + TRAY_GAP_PX;
+    let mut y = above_y;
+    if y < screen_y {
+        y = below_y;
     }
-    // 垂直方向尽量与宠物顶部对齐，必要时钳制在屏幕内。
-    let mut y = pet_pos.y;
     if y + tray_h > bottom_limit {
         y = bottom_limit - tray_h;
     }
     if y < screen_y {
         y = screen_y;
     }
+
+    // 水平：与宠物左对齐，钳制在屏幕内。
+    let mut x = pet_pos.x;
+    if x + tray_w > right_limit {
+        x = right_limit - tray_w;
+    }
     if x < screen_x {
         x = screen_x;
     }
 
     let _ = tray.set_position(tauri::PhysicalPosition::new(x, y));
+}
+
+/// 调整托盘窗口高度（逻辑像素，随活动列表增减）并重新定位。
+#[tauri::command]
+fn resize_tray_window(app: tauri::AppHandle, height: f64) -> Result<(), String> {
+    let Some(tray) = app.get_webview_window(TRAY_WINDOW_LABEL) else {
+        return Err("托盘窗口不存在".into());
+    };
+    let height = height.clamp(80.0, 420.0);
+    // 保留当前逻辑宽度，只改高度。
+    let scale = tray.scale_factor().unwrap_or(1.0);
+    let width = tray
+        .inner_size()
+        .map(|s| s.width as f64 / scale)
+        .unwrap_or(300.0);
+    let _ = tray.set_size(tauri::LogicalSize::new(width, height));
+    position_tray_window(&app);
+    Ok(())
 }
 
 /// 显示/隐藏托盘窗口；显示前先定位，保证不覆盖宠物窗口。
@@ -170,7 +194,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             open_settings_window,
             set_tray_window_visible,
-            toggle_tray_window
+            toggle_tray_window,
+            resize_tray_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running desktop-pet");
