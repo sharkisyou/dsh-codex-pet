@@ -1,5 +1,7 @@
-export type WindowKind = 'pet' | 'settings'
+export type WindowKind = 'pet' | 'settings' | 'tray'
 
 export function detectWindowKind(search: string): WindowKind {
-  return /(?:^|[?&])window=settings(?:&|$)/.test(search) ? 'settings' : 'pet'
+  if (/(?:^|[?&])window=settings(?:&|$)/.test(search)) return 'settings'
+  if (/(?:^|[?&])window=tray(?:&|$)/.test(search)) return 'tray'
+  return 'pet'
 }

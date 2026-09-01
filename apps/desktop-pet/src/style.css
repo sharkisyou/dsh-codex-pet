@@ -1591,3 +1591,95 @@ input {
     height: 46px;
   }
 }
+
+/* ---------- 独立活动托盘窗口（Tauri label=tray） ---------- */
+
+body.tray-window {
+  margin: 0;
+  background: rgb(20 24 30 / 0.96);
+  color: #eee;
+  overflow: hidden;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+body.tray-window #app,
+body.tray-window #window-content {
+  height: 100vh;
+}
+
+.tray-window-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  box-sizing: border-box;
+}
+
+.tray-window-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.1);
+  flex: none;
+}
+
+.tray-window-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #eee;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tray-window-close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: rgb(255 255 255 / 0.75);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tray-window-close:hover {
+  background: rgb(255 255 255 / 0.12);
+  color: #fff;
+}
+
+.tray-window-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+}
+
+.tray-window-empty {
+  padding: 14px 10px;
+  font-size: 12px;
+  color: rgb(255 255 255 / 0.55);
+  text-align: center;
+}
+
+/* 复用活动项样式（活动托盘内嵌列表也用它） */
+.tray-window-list .activity-tray-item {
+  padding: 7px 8px;
+}
+
+/* 托盘窗口内不渲染宠物窗元素 */
+body.tray-window .pet-stage,
+body.tray-window .activity-tray-wrap,
+body.tray-window .pet-context-menu {
+  display: none;
+}
+
+body.tray-window #window-content {
+  display: block;
+}

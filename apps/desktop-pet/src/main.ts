@@ -5,18 +5,20 @@ import { mountPetShell, type PetShell } from './pet-shell.js'
 import { createUiClient, type UiClient } from './ui-client.js'
 import { mountSettingsApp } from './settings-app.js'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { invoke } from '@tauri-apps/api/core'
 import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi'
 import type { AppStateSnapshot, ActivitySnapshot, TrayItemSnapshot } from './controller.js'
 import { type ParsedPet } from '@yshark/pet-core'
+import { renderTrayItems } from './tray-ui.js'
 
 const kind = detectWindowKind(window.location.search)
 const appEl = document.querySelector<HTMLElement>('#app')
 const content = document.querySelector<HTMLElement>('#window-content')
 
-appEl?.classList.add(kind === 'settings' ? 'shell--settings' : 'shell--pet')
-document.body.classList.add(kind === 'settings' ? 'settings-window' : 'pet-window')
-document.title = kind === 'settings' ? '桌宠设置' : '桌宠'
+appEl?.classList.add(kind === 'settings' ? 'shell--settings' : kind === 'tray' ? 'shell--tray' : 'shell--pet')
+document.body.classList.add(kind === 'settings' ? 'settings-window' : kind === 'tray' ? 'tray-window' : 'pet-window')
+document.title = kind === 'settings' ? '桌宠设置' : kind === 'tray' ? '活动' : '桌宠'
 
 function isTauri(): boolean {
   return typeof window !== 'undefined' && Boolean((window as any).__TAURI_INTERNALS__)
@@ -24,6 +26,26 @@ function isTauri(): boolean {
 
 function currentTauriWindow(): ReturnType<typeof getCurrentWindow> | null {
   return isTauri() ? getCurrentWindow() : null
+}
+
+/** 显示/隐藏独立托盘窗口（Tauri）；非 Tauri 环境静默失败。 */
+async function setTrayWindowVisible(visible: boolean): Promise<boolean> {
+  if (!isTauri()) return false
+  try {
+    return await invoke<boolean>('set_tray_window_visible', { visible })
+  } catch {
+    return false
+  }
+}
+
+/** 切换独立托盘窗口（Tauri）。 */
+async function toggleTrayWindow(): Promise<boolean> {
+  if (!isTauri()) return false
+  try {
+    return await invoke<boolean>('toggle_tray_window')
+  } catch {
+    return false
+  }
 }
 
 if (kind === 'pet') {
@@ -41,7 +63,8 @@ if (kind === 'pet') {
     let zoom = 1.2
     let awake = true
     let trayItems: TrayItemSnapshot[] = []
-    let trayOpen = false
+    /** 托盘是否展开：Tauri = 独立托盘窗口可见；浏览器 = 内嵌列表展开。 */
+    let trayExpanded = false
     let positionRestored = false
     let positionSaveTimer: ReturnType<typeof setTimeout> | null = null
     let lastActivityState = 'idle'
@@ -84,89 +107,85 @@ if (kind === 'pet') {
       onHide: hidePetWindow,
     })
 
-    /* ---------- 活动托盘 ---------- */
+    /* ---------- 活动托盘（独立托盘窗口；浏览器降级为内嵌列表） ---------- */
 
-    function trayStateLabel(state: string): string {
-      switch (state) {
-        case 'waiting': return '需要输入'
-        case 'blocked':
-        case 'failed': return '受阻'
-        case 'ready': return '就绪'
-        case 'running':
-        case 'working': return '运行中'
-        default: return '空闲'
+    /** 展开/收起托盘：Tauri 走独立窗口命令，浏览器切内嵌列表。 */
+    async function expandTray(expand: boolean): Promise<void> {
+      if (isTauri()) {
+        trayExpanded = await setTrayWindowVisible(expand)
+      } else {
+        trayExpanded = expand
       }
+      renderTray()
     }
 
     function renderTray(): void {
       if (!trayBox || !trayToggle) return
-      trayBox.innerHTML = ''
       if (trayItems.length === 0) {
-        // 无活动会话：托盘与角标全部消失
+        // 无活动会话：角标消失
         trayToggle.hidden = true
         trayBox.hidden = true
-        trayOpen = false
         return
       }
-      // 有活动会话：角标常驻（数字 + 三角）；收起时向下三角，展开时向上三角（点击开/关）
+      // 有活动会话：角标常驻（数量 + 三角）；收起时向下三角，展开时向上三角
       trayToggle.hidden = false
-      trayToggle.classList.toggle('open', trayOpen)
-      trayToggle.title = trayOpen ? '收起活动列表' : '展开活动列表'
+      trayToggle.classList.toggle('open', trayExpanded)
+      trayToggle.title = trayExpanded ? '收起活动列表' : '展开活动列表'
       const count = trayToggle.querySelector<HTMLElement>('.tray-count')
       if (count) count.textContent = String(trayItems.length)
-      if (!trayOpen) {
+      if (isTauri()) {
+        // 独立托盘窗口模式：宠物窗口内不渲染列表，只留角标
+        trayBox.hidden = true
+        return
+      }
+      // 浏览器降级：内嵌列表（点击项保持展开，便于连续切换会话）
+      if (!trayExpanded) {
         trayBox.hidden = true
         return
       }
       trayBox.hidden = false
-      for (const item of trayItems) {
-        const row = document.createElement('button')
-        row.type = 'button'
-        row.className = 'activity-tray-item' + (item.acknowledged ? ' read' : ' unread')
-        row.dataset.agent = item.agent ?? ''
-        row.dataset.sessionId = item.sessionId
-        row.title = item.title ?? item.sessionId
-
-        const title = document.createElement('span')
-        title.className = 'activity-tray-title'
-        title.textContent = item.title || item.sessionId
-
-        const meta = document.createElement('span')
-        meta.className = 'activity-tray-meta'
-        meta.textContent = `${item.agent ?? '未知来源'} · ${trayStateLabel(item.state)}`
-
-        row.append(title, meta)
-        row.addEventListener('click', () => {
-          if (item.agent === null) return
-          client.openTrayItem(item.agent, item.sessionId, 'tray')
-          trayOpen = false
-          renderTray()
-        })
-        trayBox.appendChild(row)
-      }
+      renderTrayItems(trayBox, trayItems, (agent, sessionId) => {
+        client.openTrayItem(agent, sessionId, 'tray')
+      })
     }
 
     function applyTray(activities: TrayItemSnapshot[]): void {
       const next = activities ?? []
       const hadAny = trayItems.length > 0
       trayItems = next
-      // 无活动 → 有活动：自动展开一次；之后保持用户的开/关选择，不再自动弹开
-      if (next.length > 0 && !hadAny) {
-        trayOpen = true
+      if (next.length === 0) {
+        // 无活动：收起（独立窗口隐藏 / 内嵌列表收起）
+        trayExpanded = false
+        if (isTauri()) void setTrayWindowVisible(false)
+        renderTray()
+        return
+      }
+      // 无活动 → 有活动：自动展开一次；之后保持用户的开/关选择
+      if (!hadAny) {
+        void expandTray(true)
+        return
       }
       renderTray()
     }
 
     if (trayToggle) {
       trayToggle.addEventListener('click', () => {
-        trayOpen = !trayOpen
-        renderTray()
+        // Tauri：切换独立托盘窗口；浏览器：切换内嵌列表
+        if (isTauri()) {
+          void toggleTrayWindow().then((visible) => {
+            trayExpanded = visible
+            renderTray()
+          })
+        } else {
+          trayExpanded = !trayExpanded
+          renderTray()
+        }
       })
     }
 
-    // 托盘区（角标 + 列表）不参与宠物窗的窗口拖动：阻止 pointerdown 冒泡到
-    // stage，否则 stage 的 setPointerCapture 会把真实点击的 click 重定向到
-    // stage，导致角标开/关与列表项点击失效（真实鼠标点击才触发）。
+    // 托盘区（角标 + 内嵌列表降级）不参与宠物窗的窗口拖动：阻止 pointerdown
+    // 冒泡到 stage，否则 stage 的 setPointerCapture 会把真实点击的 click
+    // 重定向到 stage，导致角标开/关失效（真实鼠标点击才触发）。
     const trayWrap = document.querySelector<HTMLElement>('#activity-tray-wrap')
     trayWrap?.addEventListener('pointerdown', (event) => event.stopPropagation())
 
@@ -336,9 +355,27 @@ if (kind === 'pet') {
 
     void attachPositionPersistence()
 
+    // 启动时同步独立托盘窗口的真实可见性（宠物窗热刷新/重启时保持角标箭头一致）。
+    if (isTauri()) {
+      try {
+        void WebviewWindow.getByLabel('tray').then((win) => {
+          if (win) {
+            void win.isVisible().then((visible) => {
+              trayExpanded = visible
+              renderTray()
+            })
+          }
+        })
+      } catch {
+        // ignore
+      }
+    }
+
     // Expose for debugging / tests.
     ;(window as any).__desktopPet = { client, renderer, shell, applyState }
   }
+} else if (kind === 'tray') {
+  void mountTrayWindow()
 } else if (kind === 'settings') {
   if (content) {
     let app: ReturnType<typeof mountSettingsApp> | null = null
@@ -384,4 +421,81 @@ if (kind === 'pet') {
     app = mountSettingsApp(content, client)
     ;(window as any).__desktopPetSettings = { client, app }
   }
+}
+
+/**
+ * 独立活动托盘窗口（Tauri 的 label=tray 窗口）。
+ * 渲染活动列表：标题 + 来源 + 状态标签，未读蓝点；点击项标记已读并打开 DSH 会话，
+ * 托盘保持打开（便于连续切换会话）。关闭按钮隐藏本窗口。
+ */
+function mountTrayWindow(): void {
+  if (!content) return
+
+  const root = document.createElement('div')
+  root.className = 'tray-window-root'
+
+  const header = document.createElement('div')
+  header.className = 'tray-window-header'
+  const title = document.createElement('span')
+  title.className = 'tray-window-title'
+  const count = document.createElement('span')
+  count.className = 'tray-count'
+  count.textContent = '0'
+  title.append('活动 (', count, ')')
+  const close = document.createElement('button')
+  close.type = 'button'
+  close.className = 'tray-window-close'
+  close.title = '关闭'
+  close.textContent = '✕'
+  header.append(title, close)
+
+  const list = document.createElement('div')
+  list.className = 'tray-window-list'
+
+  root.append(header, list)
+  content.append(root)
+
+  close.addEventListener('click', () => {
+    if (isTauri()) void invoke('set_tray_window_visible', { visible: false })
+  })
+
+  function showEmpty(text: string): void {
+    list.innerHTML = ''
+    const empty = document.createElement('div')
+    empty.className = 'tray-window-empty'
+    empty.textContent = text
+    list.append(empty)
+  }
+
+  const client = createUiClient({
+    handlers: {
+      onState(state) {
+        apply(state.tray ?? state.activities ?? [])
+      },
+      onStateSync({ activities, tray }) {
+        apply(tray ?? activities ?? [])
+      },
+      onError(message) {
+        showEmpty(`连接错误：${message}`)
+      },
+      onStatus(connected) {
+        if (!connected) showEmpty('正在连接桌宠服务…')
+      },
+    },
+  })
+
+  function apply(items: TrayItemSnapshot[]): void {
+    const listItems = items ?? []
+    count.textContent = String(listItems.length)
+    if (listItems.length === 0) {
+      showEmpty('暂无活动')
+      return
+    }
+    renderTrayItems(list, listItems, (agent, sessionId) => {
+      // 标记已读 + 打开 DSH 会话；托盘窗口保持打开
+      client.openTrayItem(agent, sessionId, 'tray')
+    })
+  }
+
+  ;(window as any).__desktopPetTray = { client, apply }
 }
