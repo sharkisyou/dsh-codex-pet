@@ -37,3 +37,20 @@ test('createBridge 不读取 ctx 上未声明的服务（cordis strict inject）
     createBridge(makeStrictCtx(), { enabled: false })
   })
 })
+
+test('openPet 在 strict inject ctx 下不抛错并优雅降级', () => {
+  const bridge = createBridge(makeStrictCtx(), { enabled: false })
+  assert.doesNotThrow(() => {
+    const result = bridge.openPet()
+    // strict ctx 有 emit（无 openPet 服务）→ 走 pet/open 事件路径，视为已请求打开
+    assert.equal(result.ok, true)
+    assert.equal(result.opened, true)
+  })
+})
+
+test('session/open 在 strict inject ctx 下不抛错（回归：曾崩溃整个 DSH GUI）', () => {
+  const bridge = createBridge(makeStrictCtx(), { enabled: false })
+  assert.doesNotThrow(() => {
+    bridge.handleIncoming({ type: 'session/open', agent: 'dsh', sessionId: 's1', reason: 'tray' })
+  })
+})

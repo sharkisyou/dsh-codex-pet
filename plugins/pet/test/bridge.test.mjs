@@ -58,6 +58,7 @@ function createHarness(options = {}) {
     get(key) {
       if (key === 'sessions') return sessionsService
       if (key === 'agents') return agentsService
+      if (key === 'openSession') return options.openSession
       return undefined
     },
     sessions: sessionsService,
@@ -195,6 +196,41 @@ test('incoming session/open is forwarded to a host opener when available', async
   ws.open()
   ws.serverMessage({ type: 'session/open', agent: BRIDGE_AGENT, sessionId: 's1', reason: 'tray' })
   assert.deepEqual(opened, [{ sessionId: 's1', reason: 'tray' }])
+})
+
+test('incoming session/open emits session/open on ctx when no host opener exists', async () => {
+  const emitted = []
+  const h = createHarness()
+  h.ctx.emit = (name, payload) => { emitted.push({ name, payload }) }
+  const ws = h.ws()
+  ws.open()
+  ws.serverMessage({ type: 'session/open', agent: BRIDGE_AGENT, sessionId: 's1', reason: 'tray' })
+  assert.deepEqual(emitted, [{ name: 'session/open', payload: { sessionId: 's1', reason: 'tray' } }])
+})
+
+test('session/open never reads un-injected ctx properties (cordis proxy safety)', async () => {
+  // Simulate the cordis proxy: reading un-injected names throws. The bridge
+  // must survive a session/open (and openPet) without touching ctx.openSession.
+  const h = createHarness()
+  const baseGet = h.ctx.get.bind(h.ctx)
+  h.ctx.get = (key) => {
+    if (key === 'openSession' || key === 'openPet') {
+      const err = new Error(`cannot get property "${key}" without inject`)
+      err.code = 'INJECT_MISSING'
+      throw err
+    }
+    return baseGet(key)
+  }
+  Object.defineProperty(h.ctx, 'openSession', { get() { throw new Error('cannot get property "openSession" without inject') } })
+  const ws = h.ws()
+  ws.open()
+  // Must not throw, and should emit session/open (falling back past the dead opener).
+  ws.serverMessage({ type: 'session/open', agent: BRIDGE_AGENT, sessionId: 's1', reason: 'tray' })
+  assert.ok(true, 'bridge survived session/open with proxy-throwing ctx')
+  // openPet must also survive and return the manual hint.
+  const result = h.bridge.openPet()
+  assert.equal(result.opened, false)
+  assert.equal(result.hint, '请手动启动桌宠应用')
 })
 
 test('createBridge exposes a send/stop surface and validates outgoing events', () => {

@@ -126,7 +126,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    const inject = ['slots']
+    const inject = ['slots', 'remote', 'sessions']
 
     function apply(ctx) {
       if (ctx && typeof ctx.effect === 'function') {
@@ -138,6 +138,32 @@ window.__ModuleLoader__.load({
           document.head.append(tag)
           return () => tag.remove()
         }, 'dsh-pet: settings styles')
+      }
+
+      // 托盘项点击 → 桥接插件发 session/open → 宿主转发为 remote event →
+      // 这里切换到对应会话。服务不可用时静默降级。
+      if (ctx && typeof ctx.effect === 'function') {
+        ctx.effect(() => {
+          if (!ctx.remote || typeof ctx.remote.$on !== 'function') return () => {}
+          const off = ctx.remote.$on('session/open', (payload) => {
+            const sessionId = payload && (payload.sessionId ?? payload.id)
+            if (typeof sessionId !== 'string' || sessionId === '') return
+            let sessions
+            try {
+              sessions = ctx.get('sessions')
+            } catch {
+              sessions = ctx.sessions
+            }
+            if (sessions && typeof sessions.open === 'function') {
+              try {
+                sessions.open(sessionId)
+              } catch {
+                // 导航失败静默；不影响托盘功能
+              }
+            }
+          })
+          return () => { if (typeof off === 'function') off() }
+        }, 'dsh-pet: session/open navigation')
       }
 
       if (ctx && ctx.slots && typeof ctx.slots.inject === 'function') {

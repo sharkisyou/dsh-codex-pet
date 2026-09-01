@@ -164,10 +164,17 @@ function getSessionsService(ctx) {
       const value = ctx.get('sessions')
       if (value !== undefined) return value
     } catch {
-      // fall through to ctx.sessions
+      // fall through below
     }
   }
-  return ctx && typeof ctx === 'object' ? ctx.sessions : undefined
+  if (ctx !== null && typeof ctx === 'object') {
+    try {
+      if (ctx.sessions !== undefined) return ctx.sessions
+    } catch {
+      // cordis ctx proxies throw for un-injected names; treat as absent
+    }
+  }
+  return undefined
 }
 
 function listSessions(ctx) {
@@ -310,9 +317,19 @@ export function createBridge(ctx, options = {}) {
   }
 
   function openPet() {
-    if (ctx && typeof ctx.openPet === 'function') {
+    // NOTE: never access ctx.openPet directly — the cordis ctx is a proxy that
+    // throws `cannot get property ... without inject` for un-injected names.
+    let hostOpenPet
+    if (ctx && typeof ctx.get === 'function') {
       try {
-        const result = ctx.openPet()
+        hostOpenPet = ctx.get('openPet')
+      } catch {
+        hostOpenPet = undefined
+      }
+    }
+    if (typeof hostOpenPet === 'function') {
+      try {
+        const result = hostOpenPet()
         if (result && typeof result.catch === 'function') {
           result.catch((error) => log('openPet failed', error))
         }
@@ -498,10 +515,30 @@ export function createBridge(ctx, options = {}) {
   }
 
   function openSession(sid, reason) {
+    // Primary path (current DSH): emit session/open. The host api-proxy
+    // forwards allowlisted events to the web client (host/remote-event), whose
+    // client plugin navigates to the session. Older DSH hosts that mounted no
+    // forwarding fall through to a direct opener API below.
+    if (ctx && typeof ctx.emit === 'function') {
+      try {
+        ctx.emit('session/open', { sessionId: sid, reason })
+        return true
+      } catch {
+        // fall through to legacy opener APIs
+      }
+    }
     const candidates = []
     const sessions = getSessionsService(ctx)
-    if (sessions) candidates.push(sessions)
-    if (ctx && typeof ctx.openSession === 'function') candidates.push({ open: ctx.openSession })
+    if (sessions && typeof sessions.open === 'function') candidates.push(sessions)
+    // Proxy-safe legacy opener lookup (never access ctx.openSession directly).
+    if (ctx && typeof ctx.get === 'function') {
+      try {
+        const hostOpen = ctx.get('openSession')
+        if (typeof hostOpen === 'function') candidates.push({ open: hostOpen })
+      } catch {
+        // no openSession service registered
+      }
+    }
     for (const candidate of candidates) {
       if (candidate && typeof candidate.open === 'function') {
         try {
@@ -514,11 +551,6 @@ export function createBridge(ctx, options = {}) {
           log('open session failed', error)
         }
       }
-    }
-    // Graceful fallback: let any host listener decide how to open the session.
-    if (ctx && typeof ctx.emit === 'function') {
-      try { ctx.emit('session/open', { sessionId: sid, reason }) } catch { /* no-op */ }
-      return true
     }
     log('received session/open but no opener is available', { sessionId: sid, reason })
     return false
@@ -840,10 +872,17 @@ export function apply(ctx, options = {}) {
         const value = ctx.get('webServer')
         if (value !== undefined) return value
       } catch {
-        // fall through to ctx.webServer
+        // fall through below
       }
     }
-    return ctx && typeof ctx === 'object' ? ctx.webServer : undefined
+    if (ctx !== null && typeof ctx === 'object') {
+      try {
+        if (ctx.webServer !== undefined) return ctx.webServer
+      } catch {
+        // un-injected name on the cordis proxy; treat as absent
+      }
+    }
+    return undefined
   }
 
   function sendJson(res, statusCode, payload) {
