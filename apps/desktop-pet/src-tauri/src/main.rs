@@ -32,7 +32,7 @@ fn main() {
             let menu = Menu::with_items(app, &[&toggle, &settings, &quit])?;
 
             let tray_icon = Image::from_bytes(include_bytes!("../icons/tray.png"))?;
-            let mut tray = TrayIconBuilder::new()
+            let tray = TrayIconBuilder::new()
                 .icon(tray_icon)
                 .menu(&menu)
                 .tooltip("桌宠")

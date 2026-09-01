@@ -255,7 +255,6 @@ input {
 }
 
 .activity-tray-toggle {
-  display: none !important;
   padding: 3px 10px;
   border-radius: 999px;
   border: 1px solid rgb(255 255 255 / 0.45);
