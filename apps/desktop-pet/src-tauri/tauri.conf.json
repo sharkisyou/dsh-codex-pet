@@ -49,7 +49,7 @@
         "decorations": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
-        "shadow": true
+        "shadow": false
       }
     ],
     "security": {
