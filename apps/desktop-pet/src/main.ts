@@ -115,7 +115,7 @@ if (kind === 'pet') {
       }
       // 有活动会话：角标常驻；收起时向下三角，展开时向上三角（点击开/关）
       trayToggle.hidden = false
-      trayToggle.textContent = trayOpen ? '▲' : '▼'
+      trayToggle.classList.toggle('open', trayOpen)
       trayToggle.title = trayOpen ? '收起活动列表' : '展开活动列表'
       if (!trayOpen) {
         trayBox.hidden = true

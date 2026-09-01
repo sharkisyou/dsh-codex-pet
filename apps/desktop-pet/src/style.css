@@ -181,39 +181,58 @@ input {
   outline: none;
 }
 
-/* 活动托盘（桌宠窗口，多会话活动入口） */
+/* 活动托盘（桌宠窗口，锚定在宠物头部上方，多会话活动入口） */
 .activity-tray-wrap {
   position: absolute;
-  right: 8px;
-  bottom: 4px;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
-/* 收起时的向下三角 / 展开时的向上三角角标（点击开/关托盘） */
+/* 角标：圆形小按钮，内部为纯 CSS 三角；收起时向下 ▼，展开时向上 ▲ */
 .activity-tray-toggle {
-  width: 22px;
-  height: 22px;
+  position: relative;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
-  border: 1px solid rgb(255 255 255 / 0.45);
-  background: rgb(15 23 42 / 0.5);
-  color: #fff;
-  font-size: 0.6rem;
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  border: 1px solid rgb(255 255 255 / 0.5);
+  background: rgb(15 23 42 / 0.55);
   cursor: pointer;
   backdrop-filter: blur(8px);
 }
 
+.activity-tray-toggle::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid #fff;
+  transform: translate(-50%, -35%);
+}
+
+.activity-tray-toggle.open::before {
+  border-top: 0;
+  border-bottom: 7px solid #fff;
+  transform: translate(-50%, -65%);
+}
+
 .activity-tray-toggle:hover {
-  background: rgb(15 23 42 / 0.72);
+  background: rgb(15 23 42 / 0.75);
 }
 
 .activity-tray {
   position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
   width: min(320px, calc(100vw - 24px));
   max-height: 240px;
   overflow-y: auto;
