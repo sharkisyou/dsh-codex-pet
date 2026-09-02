@@ -140,30 +140,74 @@ window.__ModuleLoader__.load({
         }, 'dsh-pet: settings styles')
       }
 
+      function navigateTo(ctx, sessionId) {
+        if (typeof sessionId !== 'string' || sessionId === '') return
+        let sessions
+        try {
+          sessions = ctx.get('sessions')
+        } catch {
+          sessions = ctx.sessions
+        }
+        if (sessions && typeof sessions.open === 'function') {
+          try {
+            sessions.open(sessionId)
+          } catch {
+            // 导航失败静默；不影响托盘功能
+          }
+        }
+      }
+
+      function openSessionIdOf(payload) {
+        return payload && (payload.sessionId ?? payload.id)
+      }
+
       // 托盘项点击 → 桥接插件发 session/open → 宿主转发为 remote event →
       // 这里切换到对应会话。服务不可用时静默降级。
       if (ctx && typeof ctx.effect === 'function') {
         ctx.effect(() => {
           if (!ctx.remote || typeof ctx.remote.$on !== 'function') return () => {}
           const off = ctx.remote.$on('session/open', (payload) => {
-            const sessionId = payload && (payload.sessionId ?? payload.id)
-            if (typeof sessionId !== 'string' || sessionId === '') return
-            let sessions
-            try {
-              sessions = ctx.get('sessions')
-            } catch {
-              sessions = ctx.sessions
-            }
-            if (sessions && typeof sessions.open === 'function') {
-              try {
-                sessions.open(sessionId)
-              } catch {
-                // 导航失败静默；不影响托盘功能
-              }
-            }
+            navigateTo(ctx, openSessionIdOf(payload))
           })
           return () => { if (typeof off === 'function') off() }
         }, 'dsh-pet: session/open navigation')
+      }
+
+      // B2（不依赖 DSH 官方 allowlist）：宿主把托盘点击的“打开会话”意图存为
+      // 待办，客户端常驻轮询 /pet/bridge/pending-open（GET 即取即清）取回并导航。
+      // 与上面的 remote.$on 事件通道并存：allowlist 在时事件即时到达；
+      // 不在（DSH 升级抹掉补丁）时由本轮询兜底，DSH 升级后无需再改官方代码。
+      if (ctx && typeof ctx.effect === 'function') {
+        ctx.effect(() => {
+          if (typeof globalThis.fetch !== 'function') return () => {}
+          let stopped = false
+          let timer = null
+          const pollPending = async () => {
+            if (stopped) return
+            let payload = null
+            try {
+              const base = typeof window !== 'undefined' && window.location && window.location.origin
+                ? window.location.origin
+                : ''
+              const res = await globalThis.fetch(`${base}${RPC_PREFIX}/pending-open`, {
+                method: 'GET',
+                headers: { 'content-type': 'application/json' },
+                cache: 'no-store',
+              })
+              if (!res.ok) return
+              payload = await res.json()
+            } catch {
+              // 网络/服务暂不可用；下一轮重试
+            }
+            if (!payload || !payload.ok || !Array.isArray(payload.opens)) return
+            for (const entry of payload.opens) {
+              navigateTo(ctx, openSessionIdOf(entry))
+            }
+          }
+          pollPending()
+          timer = setInterval(pollPending, POLL_MS)
+          return () => { stopped = true; if (timer !== null) clearInterval(timer) }
+        }, 'dsh-pet: session/open pending poll')
       }
 
       if (ctx && ctx.slots && typeof ctx.slots.inject === 'function') {

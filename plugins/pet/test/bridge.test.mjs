@@ -208,6 +208,37 @@ test('incoming session/open emits session/open on ctx when no host opener exists
   assert.deepEqual(emitted, [{ name: 'session/open', payload: { sessionId: 's1', reason: 'tray' } }])
 })
 
+test('incoming session/open enqueues a pending open for the client poller (B2)', async () => {
+  const h = createHarness()
+  const ws = h.ws()
+  ws.open()
+  ws.serverMessage({ type: 'session/open', agent: BRIDGE_AGENT, sessionId: 's1', reason: 'tray' })
+
+  // 即便没有宿主 opener / 没有 allowlist 转发，待办队列也会记录打开意图。
+  const drained = h.bridge.drainPendingOpens()
+  assert.equal(drained.length, 1)
+  assert.equal(drained[0].sessionId, 's1')
+  assert.equal(drained[0].reason, 'tray')
+  // GET 即取即清：再次 drain 为空
+  assert.deepEqual(h.bridge.drainPendingOpens(), [])
+})
+
+test('pending-open queue drops consecutive duplicates and is bounded', () => {
+  const h = createHarness()
+  h.bridge.openSession('s1', 'tray')
+  h.bridge.openSession('s1', 'tray') // 连续同会话去重
+  h.bridge.openSession('s2', 'other')
+  let drained = h.bridge.drainPendingOpens()
+  assert.deepEqual(drained.map((entry) => entry.sessionId), ['s1', 's2'])
+
+  // 有界：超过上限丢弃最旧
+  for (let i = 0; i < 25; i++) h.bridge.openSession(`s-${i}`, 'tray')
+  drained = h.bridge.drainPendingOpens()
+  assert.equal(drained.length, 20)
+  assert.equal(drained[0].sessionId, 's-5')
+  assert.equal(drained.at(-1).sessionId, 's-24')
+})
+
 test('session/open never reads un-injected ctx properties (cordis proxy safety)', async () => {
   // Simulate the cordis proxy: reading un-injected names throws. The bridge
   // must survive a session/open (and openPet) without touching ctx.openSession.

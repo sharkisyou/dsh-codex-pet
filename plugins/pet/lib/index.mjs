@@ -354,6 +354,25 @@ export function createBridge(ctx, options = {}) {
   const childParent = new Map()
   const liveIds = new Set()
 
+  // B2：宿主侧“打开会话”待办队列。桌宠托盘点击 → pet server 发 session/open →
+  // 桥接收到后除了尝试 ctx.emit（官方 allowlist 转发，升级后可能被抹掉），
+  // 一律先入队；GUI 客户端常驻轮询 /pet/bridge/pending-open 取走并 sessions.open()。
+  // 队列有界：窗口长期未开时丢弃最旧条目，避免无限增长。
+  const pendingOpens = []
+  const PENDING_OPEN_MAX = 20
+
+  function queuePendingOpen(sid, reason) {
+    if (typeof sid !== 'string' || sid === '') return
+    const tail = pendingOpens[pendingOpens.length - 1]
+    if (tail !== undefined && tail.sessionId === sid) return
+    pendingOpens.push({ sessionId: sid, ...(reason !== undefined ? { reason } : {}), at: Date.now() })
+    while (pendingOpens.length > PENDING_OPEN_MAX) pendingOpens.shift()
+  }
+
+  function drainPendingOpens() {
+    return pendingOpens.splice(0)
+  }
+
   function ensureSession(sid) {
     let info = knownSessions.get(sid)
     if (info === undefined) {
@@ -515,6 +534,10 @@ export function createBridge(ctx, options = {}) {
   }
 
   function openSession(sid, reason) {
+    // B2: queue first — the GUI client drains via /pet/bridge/pending-open even
+    // when the official allowlist no longer forwards session/open. Then still
+    // attempt the forwarded-event path for instant navigation when it works.
+    queuePendingOpen(sid, reason)
     // Primary path (current DSH): emit session/open. The host api-proxy
     // forwards allowlisted events to the web client (host/remote-event), whose
     // client plugin navigates to the session. Older DSH hosts that mounted no
@@ -842,6 +865,8 @@ export function createBridge(ctx, options = {}) {
     sendSync,
     handleIncoming,
     openSession,
+    queuePendingOpen,
+    drainPendingOpens,
     refreshSessions,
     snapshotSessions,
     directoryEntries,
@@ -952,6 +977,13 @@ export function apply(ctx, options = {}) {
         }
         if (pathname === '/pet/bridge/open' && (req.method === 'POST' || req.method === 'GET')) {
           sendJson(res, 200, { ok: true, ...bridge.openPet() })
+          return
+        }
+        if (pathname === '/pet/bridge/pending-open' && (req.method === 'GET' || req.method === 'HEAD')) {
+          // B2: GET 即取即清。客户端常驻轮询此端点，把托盘点击的
+          // “打开会话”意图取走并导航，不依赖 DSH 官方 allowlist。
+          const opens = bridge.drainPendingOpens()
+          sendJson(res, 200, { ok: true, opens })
           return
         }
         sendJson(res, 404, { ok: false, error: '未知桥接设置接口' })

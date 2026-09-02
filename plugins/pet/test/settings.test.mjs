@@ -120,6 +120,46 @@ test('apply registers /pet/bridge HTTP status and enabled routes', async () => {
   assert.equal(responses.at(-1).ok, false)
 })
 
+test('apply exposes GET /pet/bridge/pending-open that drains on read (B2)', async () => {
+  FakeWebSocket.reset()
+  let registered
+  const responses = []
+  const res = {
+    writeHead(code, headers) {
+      this.code = code
+      this.headers = headers
+    },
+    end(body) {
+      responses.push(JSON.parse(body))
+    },
+  }
+  const webServer = {
+    register(route) {
+      registered = route
+    },
+  }
+  const bridge = apply(makeCtx({ webServer }), { enabled: true, WebSocket: FakeWebSocket })
+  assert.ok(registered)
+  assert.equal(registered.path, '/pet')
+
+  // 入队两个打开意图
+  bridge.openSession('s1', 'tray')
+  bridge.openSession('s2', undefined)
+
+  await registered.handler({ url: '/pet/bridge/pending-open', method: 'GET' }, res)
+  const body = responses.at(-1)
+  assert.equal(body.ok, true)
+  assert.deepEqual(body.opens.map((entry) => entry.sessionId), ['s1', 's2'])
+  assert.equal(body.opens[0].reason, 'tray')
+
+  // GET 即取即清：第二次读取为空
+  await registered.handler({ url: '/pet/bridge/pending-open', method: 'GET' }, res)
+  assert.deepEqual(responses.at(-1).opens, [])
+
+  // 未入队时正常返回空数组
+  bridge.stop()
+})
+
 
 test('package metadata ships the settings client and dsh.client declaration', () => {
   assert.equal(packageJson.exports['./client'], './lib/client.js')
