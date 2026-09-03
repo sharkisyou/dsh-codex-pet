@@ -85,6 +85,19 @@ function titleOfEntry(entry) {
       }
     }
   }
+  // DSH 0.1.2+ low-level SessionStore entries are live Session objects whose
+  // log (entry.log / entry.eventsSnapshot) holds the `session/title` event.
+  // Fold the latest one (same convention as the official session-title service).
+  for (const log of [entry.log, entry.eventsSnapshot]) {
+    if (!Array.isArray(log)) continue
+    for (let i = log.length - 1; i >= 0; i--) {
+      const event = log[i]
+      if (event === null || typeof event !== 'object' || event.type !== 'session/title') continue
+      const data = event.data
+      const title = data !== null && typeof data === 'object' ? data.title : undefined
+      if (typeof title === 'string' && title !== '') return title
+    }
+  }
   const header = entry.header ?? (typeof entry.session === 'object' && entry.session !== null ? entry.session.header : null)
   if (header !== null && typeof header === 'object') {
     for (const key of ['title', 'displayTitle', 'name']) {

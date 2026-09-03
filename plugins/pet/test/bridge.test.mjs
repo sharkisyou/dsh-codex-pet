@@ -277,6 +277,28 @@ test('async session store (rc.1) is pulled and titles applied without wiping eve
   h.bridge.stop()
 })
 
+test('titles are folded from session/title events in live Session log entries', () => {
+  const h = createHarness({
+    sessions: {
+      list: () => [{
+        header: { id: 's1' },
+        log: [
+          { type: 'user/message', seq: 1, data: {} },
+          { type: 'session/title', seq: 2, data: { title: '来自日志的标题', source: { kind: 'fallback' } } },
+          { type: 'user/message', seq: 3, data: {} },
+          { type: 'session/title', seq: 4, data: { title: '最后标题', source: { kind: 'user' } } },
+        ],
+      }],
+      get: () => undefined,
+    },
+  })
+  h.ws().open()
+  const directory = h.bridge.directoryEntries()
+  const s1 = directory.find((entry) => entry.sessionId === 's1')
+  assert.ok(s1, 'session object entry should be enumerated via header.id')
+  assert.equal(s1.title, '最后标题', 'must fold the LATEST session/title event')
+})
+
 test('session/open never reads un-injected ctx properties (cordis proxy safety)', async () => {
   // Simulate the cordis proxy: reading un-injected names throws. The bridge
   // must survive a session/open (and openPet) without touching ctx.openSession.
