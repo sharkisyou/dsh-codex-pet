@@ -61,6 +61,22 @@ function titleOfEntry(entry) {
     const v = entry[key]
     if (typeof v === 'string' && v !== '') return v
   }
+  // DSH 0.1.2+ (rc/alpha) host session summaries carry the folded title in the
+  // `title` projection view: { projections: { values: { title: { title, ... } } } }.
+  const projections = entry.projections
+  if (projections !== null && typeof projections === 'object') {
+    const values = projections.values
+    if (values !== null && typeof values === 'object') {
+      const titleValue = values.title
+      if (typeof titleValue === 'string' && titleValue !== '') return titleValue
+      if (titleValue !== null && typeof titleValue === 'object') {
+        for (const key of ['title', 'displayTitle', 'name']) {
+          const v = titleValue[key]
+          if (typeof v === 'string' && v !== '') return v
+        }
+      }
+    }
+  }
   for (const container of [entry.summary, entry.meta]) {
     if (container !== null && typeof container === 'object') {
       for (const key of ['title', 'displayTitle', 'name']) {
@@ -190,6 +206,25 @@ function listSessions(ctx) {
   return []
 }
 
+// DSH 0.1.2+ session list may be async (Promise). Resolve either form; on
+// timeout/error return [] so callers can keep their event-derived state.
+async function pullSessionEntries(ctx, timeoutMs = 8000) {
+  const service = getSessionsService(ctx)
+  if (!service || typeof service.list !== 'function') return []
+  try {
+    const result = service.list()
+    if (result !== null && typeof result === 'object' && typeof result.then === 'function') {
+      return await Promise.race([
+        result,
+        new Promise((resolve) => setTimeout(() => resolve([]), timeoutMs)),
+      ]).catch(() => [])
+    }
+    return Array.isArray(result) ? result : []
+  } catch {
+    return []
+  }
+}
+
 function parentSessionIdOf(ctx, childId, info) {
   if (childId === null) return null
   if (info !== null && typeof info === 'object') {
@@ -268,6 +303,8 @@ export function createBridge(ctx, options = {}) {
   const url = safeString(options.url, process.env.DSH_PET_URL || DEFAULT_WS_URL)
   const reconnectDelay = Number(options.reconnectDelay ?? process.env.DSH_PET_RECONNECT_MS ?? DEFAULT_RECONNECT_MS)
   const maxReconnectDelay = Number(options.maxReconnectDelay ?? MAX_RECONNECT_MS)
+  // Session directory/title refresh cadence for async session stores (rc.1+).
+  const refreshMs = Math.max(1000, Number(options.refreshMs ?? process.env.DSH_PET_REFRESH_MS ?? 4000))
   const log = (msg, ...args) => {
     if (logger && typeof logger.info === 'function') logger.info(`[pet-bridge] ${msg}`, ...args)
   }
@@ -289,6 +326,8 @@ export function createBridge(ctx, options = {}) {
   let retryTimer = null
   let retryAttempt = 0
   let lastError = null
+  let pullTimer = null
+  let lastPushedSignature = null
 
   function status() {
     return {
@@ -421,10 +460,17 @@ export function createBridge(ctx, options = {}) {
     return info.state
   }
 
-  function refreshSessions() {
+  // Apply one session-store snapshot to the bridge's knownSessions/liveIds.
+  // Semantics:
+  // - non-empty list → authoritative: reconcile liveIds and drop gone sessions
+  //   (drives disposal).
+  // - empty list with a store → no new information (async store mid-flight or
+  //   genuinely empty): keep the current event-derived liveIds untouched.
+  // - no store at all → liveIds mirror event-derived knownSessions.
+  function applyEntries(entries) {
+    const list = Array.isArray(entries) ? entries : []
     const service = getSessionsService(ctx)
     const hasStore = Boolean(service && typeof service.list === 'function')
-    const list = hasStore ? listSessions(ctx) : []
     const seen = new Set()
     for (const entry of list) {
       if (isChildSession(entry)) continue
@@ -436,18 +482,59 @@ export function createBridge(ctx, options = {}) {
       seen.add(sid)
     }
     for (const sid of seen) ensureSession(sid)
-    if (hasStore) {
+    if (list.length > 0) {
       liveIds.clear()
       for (const sid of seen) liveIds.add(sid)
       // The DSH session store is authoritative for live top-level sessions.
       for (const sid of [...knownSessions.keys()]) {
         if (!seen.has(sid)) knownSessions.delete(sid)
       }
-    } else {
+    } else if (!hasStore) {
       liveIds.clear()
       for (const sid of knownSessions.keys()) liveIds.add(sid)
     }
     return seen
+  }
+
+  function refreshSessions() {
+    const service = getSessionsService(ctx)
+    const hasStore = Boolean(service && typeof service.list === 'function')
+    const list = hasStore ? listSessions(ctx) : []
+    return applyEntries(list)
+  }
+
+  // Background async refresh: handles stores whose list() is async (rc.1+).
+  function startPullTimer() {
+    if (pullTimer !== null) return
+    pullTimer = setInterval(() => {
+      void pullAndPushIfChanged()
+    }, refreshMs)
+    if (pullTimer && typeof pullTimer.unref === 'function') pullTimer.unref()
+  }
+
+  function stopPullTimer() {
+    if (pullTimer !== null) {
+      clearInterval(pullTimer)
+      pullTimer = null
+    }
+  }
+
+  function signatureOf() {
+    return [...liveIds].sort()
+      .map((sid) => `${sid}=${(knownSessions.get(sid)?.title) || ''}`)
+      .join('|')
+  }
+
+  async function pullAndPushIfChanged() {
+    if (stopped || !enabled) return
+    const entries = await pullSessionEntries(ctx)
+    applyEntries(entries)
+    if (!connected || socket === null) return
+    const signature = signatureOf()
+    if (signature === lastPushedSignature) return
+    lastPushedSignature = signature
+    sendDirectory()
+    sendSync()
   }
 
   function sessionIds() {
@@ -608,6 +695,10 @@ export function createBridge(ctx, options = {}) {
       sendSnapshot()
       sendDirectory()
       sendSync()
+      lastPushedSignature = signatureOf()
+      // Warm the maps from an async session store (rc.1+) and, when the pulled
+      // directory differs from what was just sent, push the corrected view.
+      void pullAndPushIfChanged()
     }
 
     socket.onmessage = (event) => {
@@ -656,6 +747,8 @@ export function createBridge(ctx, options = {}) {
     started = true
     stopped = false
     refreshSessions()
+    startPullTimer()
+    void pullAndPushIfChanged()
     connect()
   }
 
@@ -664,6 +757,8 @@ export function createBridge(ctx, options = {}) {
     stopped = true
     started = false
     connected = false
+    lastPushedSignature = null
+    stopPullTimer()
     if (retryTimer !== null) {
       clearTimeout(retryTimer)
       retryTimer = null

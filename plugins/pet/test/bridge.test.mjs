@@ -239,6 +239,44 @@ test('pending-open queue drops consecutive duplicates and is bounded', () => {
   assert.equal(drained.at(-1).sessionId, 's-24')
 })
 
+test('session titles are read from projections.values.title (rc.1 summary shape)', () => {
+  const h = createHarness({
+    sessions: {
+      list: () => [
+        { sessionId: 's1', projections: { values: { title: { title: '交接文档标题', source: { kind: 'fallback' } } } } },
+        { sessionId: 's2', projections: { values: { title: '纯字符串标题' } } },
+      ],
+      get: () => undefined,
+    },
+  })
+  h.ws().open()
+  const directory = h.bridge.directoryEntries()
+  const byId = new Map(directory.map((entry) => [entry.sessionId, entry]))
+  assert.equal(byId.get('s1').title, '交接文档标题')
+  assert.equal(byId.get('s2').title, '纯字符串标题')
+  // 无标题时仍回退到 sessionId
+  assert.notEqual(byId.get('s1').title, 's1')
+})
+
+test('async session store (rc.1) is pulled and titles applied without wiping event state', async () => {
+  const h = createHarness({
+    sessions: {
+      list: async () => [{ sessionId: 's1', projections: { values: { title: { title: '异步标题' } } } }],
+      get: () => undefined,
+    },
+    bridgeOptions: { refreshMs: 1000 },
+  })
+  const ws = h.ws()
+  ws.open()
+  // 同步路径读不到 async list；等后台异步拉取把标题灌入。
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  const directory = h.bridge.directoryEntries()
+  const s1 = directory.find((entry) => entry.sessionId === 's1')
+  assert.ok(s1, 'async list session should be enumerated')
+  assert.equal(s1.title, '异步标题')
+  h.bridge.stop()
+})
+
 test('session/open never reads un-injected ctx properties (cordis proxy safety)', async () => {
   // Simulate the cordis proxy: reading un-injected names throws. The bridge
   // must survive a session/open (and openPet) without touching ctx.openSession.
