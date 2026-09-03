@@ -18,6 +18,17 @@ export function trayStateLabel(state: string): string {
   }
 }
 
+/** 状态 → 列表项 CSS 状态类（状态点颜色：已完成=绿、受阻=红、需要输入=琥珀）。 */
+export function trayStateClass(state: string): string {
+  switch (state) {
+    case 'ready': return 'st-ready'
+    case 'blocked':
+    case 'failed': return 'st-blocked'
+    case 'waiting': return 'st-waiting'
+    default: return ''
+  }
+}
+
 export interface TrayItemClickHandler {
   (agent: string, sessionId: string, reason?: string): void
 }
@@ -33,7 +44,9 @@ export function renderTrayItems(
   for (const item of items) {
     const row = document.createElement('button')
     row.type = 'button'
+    const stateClass = trayStateClass(item.state)
     row.className = 'activity-tray-item' + (item.acknowledged ? ' read' : ' unread')
+      + (stateClass !== '' ? ` ${stateClass}` : '')
     row.dataset.agent = item.agent ?? ''
     row.dataset.sessionId = item.sessionId
     row.title = item.title ?? item.sessionId

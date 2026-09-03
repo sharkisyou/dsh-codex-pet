@@ -284,6 +284,11 @@ input {
   background: #4c9aff;
 }
 
+/* 状态点按会话状态着色：已完成=绿、受阻/失败=红、需要输入=琥珀、其余默认蓝 */
+.activity-tray-item.unread.st-ready::after { background: #2f9e44; }
+.activity-tray-item.unread.st-blocked::after { background: #e5484d; }
+.activity-tray-item.unread.st-waiting::after { background: #f5a524; }
+
 /* ---------- 设置窗口（浅色主题） ---------- */
 
 .shell--settings {
