@@ -38,3 +38,19 @@ test('subagent and awaiting reply semantics remain correct', () => {
   assert.deepEqual(sm.apply({ kind: 'agent-status', status: 'idle', ts: 500 }), { state: 'idle', bubbleKey: 'awaitingReply', bubbleParams: null })
   assert.equal(REPLY_BUBBLE_MS, 5000)
 })
+
+test('session/done turns idle-after-running into ready (已完成) and resists idle echoes', () => {
+  const sm = createPetProtocolStateMachine()
+  assert.deepEqual(sm.apply({ kind: 'agent-status', status: 'running', ts: 1 }), { state: 'running', bubbleKey: 'thinking', bubbleParams: null })
+  assert.deepEqual(sm.apply({ kind: 'done', ts: 2 }), { state: 'ready', bubbleKey: 'ready', bubbleParams: null })
+  // A repeated idle report must not drop an unviewed completion.
+  assert.deepEqual(sm.apply({ kind: 'agent-status', status: 'idle', ts: 3 }), { state: 'ready', bubbleKey: 'ready', bubbleParams: null })
+  // New activity clears the completion.
+  assert.deepEqual(sm.apply({ kind: 'agent-status', status: 'running', ts: 4 }), { state: 'running', bubbleKey: 'thinking', bubbleParams: null })
+})
+
+test('session/done wire event type name maps to ready', () => {
+  const sm = createPetStateMachine({ agent: 'dsh', sessionId: 's1' })
+  assert.deepEqual(sm.apply({ type: 'session/status', status: 'running', ts: 1 }), { state: 'running', bubbleKey: 'thinking', bubbleParams: null })
+  assert.deepEqual(sm.apply({ type: 'session/done', ts: 2 }), { state: 'ready', bubbleKey: 'ready', bubbleParams: null })
+})

@@ -210,6 +210,55 @@ window.__ModuleLoader__.load({
         }, 'dsh-pet: session/open pending poll')
       }
 
+      // 上报 GUI 当前会话 → 宿主据此把"非当前会话"的完成态显示到托盘；
+      // 当我切到某个会话时宿主会清除它的"已完成"待办（视为已查看）。
+      if (ctx && typeof ctx.effect === 'function') {
+        ctx.effect(() => {
+          let sessions
+          try {
+            sessions = ctx.get('sessions')
+          } catch {
+            sessions = ctx.sessions
+          }
+          if (!sessions || !sessions.list || typeof sessions.list.getSnapshot !== 'function') return () => {}
+          let lastReported = undefined
+          const report = (current) => {
+            if (current === lastReported) return
+            lastReported = current
+            const base = typeof window !== 'undefined' && window.location && window.location.origin
+              ? window.location.origin
+              : ''
+            globalThis.fetch(`${base}${RPC_PREFIX}/current`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              cache: 'no-store',
+              body: JSON.stringify({ sessionId: current || null }),
+            }).catch(() => { lastReported = undefined })
+          }
+          const read = () => {
+            try {
+              const snap = sessions.list.getSnapshot()
+              const current = snap && typeof snap.current === 'string' && snap.current !== ''
+                ? snap.current
+                : null
+              report(current)
+            } catch {
+              // ignore
+            }
+          }
+          read()
+          let unsubscribe = null
+          if (typeof sessions.list.subscribe === 'function') {
+            try {
+              unsubscribe = sessions.list.subscribe(() => read())
+            } catch {
+              unsubscribe = null
+            }
+          }
+          return () => { if (typeof unsubscribe === 'function') unsubscribe() }
+        }, 'dsh-pet: current session reporting')
+      }
+
       if (ctx && ctx.slots && typeof ctx.slots.inject === 'function') {
         ctx.slots.inject('settings.section', () => ctx.slots.register(
           {

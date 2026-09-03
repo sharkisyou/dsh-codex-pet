@@ -7,8 +7,8 @@
 
 export const REPLY_BUBBLE_MS = 5000
 
-export type MachineState = 'idle' | 'working' | 'waiting' | 'failed'
-export type ProtocolMachineState = 'idle' | 'running' | 'waiting' | 'blocked'
+export type MachineState = 'idle' | 'working' | 'waiting' | 'failed' | 'ready'
+export type ProtocolMachineState = 'idle' | 'running' | 'waiting' | 'blocked' | 'ready'
 
 export interface PetStateMachineEvent {
   kind?: string
@@ -53,6 +53,9 @@ export function createPetStateMachine(options: PetStateMachineOptions = {}): Pet
   let subagents = 0
   let failedAt: number | null = null
   let idleSince: number | null = null
+  // Completion: the agent ran and is now idle (a task finished). The session
+  // shows as 'ready' (tray label 已完成) until the user views it or it runs again.
+  let doneAt: number | null = null
 
   function workingState(): MachineState | ProtocolMachineState {
     return protocol ? 'running' : 'working'
@@ -81,6 +84,9 @@ export function createPetStateMachine(options: PetStateMachineOptions = {}): Pet
       }
       return { state: workingState(), bubbleKey: 'thinking', bubbleParams: null }
     }
+    if (doneAt !== null) {
+      return { state: 'ready', bubbleKey: 'ready', bubbleParams: null }
+    }
     if (idleSince !== null && ts - idleSince < REPLY_BUBBLE_MS) {
       return { state: 'idle', bubbleKey: 'awaitingReply', bubbleParams: null }
     }
@@ -102,6 +108,9 @@ export function createPetStateMachine(options: PetStateMachineOptions = {}): Pet
         break
       case 'session/error':
         kind = 'error'
+        break
+      case 'session/done':
+        kind = 'done'
         break
       case 'tool/start':
         kind = 'tool-start'
@@ -139,6 +148,12 @@ export function createPetStateMachine(options: PetStateMachineOptions = {}): Pet
       return compute(ts)
     }
 
+    // Any real activity clears the completed state. A repeated idle report
+    // keeps it (the bridge sends session/done on the running→idle edge; later
+    // idle echoes must not drop an unviewed completion).
+    if (doneAt !== null && kind !== 'done' && !(kind === 'agent-status' && event.status !== 'running')) {
+      doneAt = null
+    }
     // Any real activity clears the failed state.
     if (failedAt !== null && kind !== 'error') failedAt = null
 
@@ -150,6 +165,13 @@ export function createPetStateMachine(options: PetStateMachineOptions = {}): Pet
           agentRunning = false
           idleSince = ts
         }
+        break
+      case 'done':
+        // A task run finished: agent is idle and the session waits for review.
+        doneAt = ts
+        agentRunning = false
+        tool = null
+        idleSince = null
         break
       case 'tool-start':
         tool = { name: event.name ?? '', isQuestion: event.isQuestion === true }

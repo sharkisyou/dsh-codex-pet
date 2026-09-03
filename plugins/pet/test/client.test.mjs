@@ -157,3 +157,37 @@ test('client 在无 remote/sessions/fetch 服务时优雅降级', () => {
   assert.doesNotThrow(() => mod.apply(ctx))
   ctx.dispose()
 })
+
+test('client 上报当前会话变化到 /pet/bridge/current（完成后查看清除）', async () => {
+  const posted = []
+  const mod = loadClientModule(async (url, opts) => {
+    const u = String(url)
+    if (u.endsWith('/pet/bridge/current')) {
+      posted.push(JSON.parse(opts.body))
+      return { ok: true, json: async () => ({ ok: true }) }
+    }
+    if (u.endsWith('/pet/bridge/pending-open')) {
+      return { ok: true, json: async () => ({ ok: true, opens: [] }) }
+    }
+    throw new Error('unexpected url ' + u)
+  })
+  const listeners = []
+  const snap = { current: 'session-cur' }
+  const sessionsSvc = {
+    list: {
+      getSnapshot: () => snap,
+      subscribe(fn) { listeners.push(fn); return () => {} },
+    },
+  }
+  const ctx = makeApplyCtx()
+  ctx.get = (key) => { if (key === 'sessions') return sessionsSvc; return undefined }
+  mod.apply(ctx)
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  assert.ok(posted.some((p) => p.sessionId === 'session-cur'), 'initial current must be reported')
+
+  snap.current = 'session-next'
+  for (const fn of listeners) fn()
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  assert.ok(posted.some((p) => p.sessionId === 'session-next'), 'current change must be reported')
+  ctx.dispose()
+})

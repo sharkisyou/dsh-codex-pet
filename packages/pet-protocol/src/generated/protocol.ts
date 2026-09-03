@@ -117,10 +117,22 @@ export interface SessionOpenEvent {
   "sessionId": SessionId;
   "reason"?: string;
 }
+export interface SessionDoneEvent {
+  "type": "session/done";
+  "agent": Agent;
+  "sessionId": SessionId;
+  /** Completion timestamp (ms). */
+  "at"?: number;
+}
+export interface SessionCurrentEvent {
+  "type": "session/current";
+  "agent": Agent;
+  "sessionId": SessionId;
+}
 
-export type PetEvent = HelloEvent | SnapshotEvent | SessionStatusEvent | SessionErrorEvent | ToolStartEvent | ToolEndEvent | ApprovalStartEvent | ApprovalEndEvent | QuestionStartEvent | QuestionEndEvent | SubagentStartEvent | SubagentEndEvent | SessionSyncEvent | SessionDirectoryEvent | SessionOpenEvent
+export type PetEvent = HelloEvent | SnapshotEvent | SessionStatusEvent | SessionErrorEvent | ToolStartEvent | ToolEndEvent | ApprovalStartEvent | ApprovalEndEvent | QuestionStartEvent | QuestionEndEvent | SubagentStartEvent | SubagentEndEvent | SessionSyncEvent | SessionDirectoryEvent | SessionOpenEvent | SessionDoneEvent | SessionCurrentEvent
 
-export const EVENT_TYPES = ["hello", "snapshot", "session/status", "session/error", "tool/start", "tool/end", "approval/start", "approval/end", "question/start", "question/end", "subagent/start", "subagent/end", "session/sync", "session/directory", "session/open"] as const
+export const EVENT_TYPES = ["hello", "snapshot", "session/status", "session/error", "tool/start", "tool/end", "approval/start", "approval/end", "question/start", "question/end", "subagent/start", "subagent/end", "session/sync", "session/directory", "session/open", "session/done", "session/current"] as const
 
 export type EventType = (typeof EVENT_TYPES)[number]
 
@@ -175,6 +187,12 @@ export const protocolSchema = {
     },
     {
       "$ref": "#/definitions/SessionOpenEvent"
+    },
+    {
+      "$ref": "#/definitions/SessionDoneEvent"
+    },
+    {
+      "$ref": "#/definitions/SessionCurrentEvent"
     }
   ],
   "definitions": {
@@ -676,6 +694,52 @@ export const protocolSchema = {
       ],
       "additionalProperties": false,
       "description": "Reverse event: desktop pet asks the bridge/tool to open a session in its own UI. Implementations may degrade gracefully."
+    },
+    "SessionDoneEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "session/done"
+        },
+        "agent": {
+          "$ref": "#/definitions/Agent"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/SessionId"
+        },
+        "at": {
+          "type": "number",
+          "description": "Completion timestamp (ms)."
+        }
+      },
+      "required": [
+        "type",
+        "agent",
+        "sessionId"
+      ],
+      "additionalProperties": false,
+      "description": "A session's agent finished a run (was running and is now idle). The desktop pet keeps the session in the tray as 'done/已完成' until the user views it."
+    },
+    "SessionCurrentEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "session/current"
+        },
+        "agent": {
+          "$ref": "#/definitions/Agent"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/SessionId"
+        }
+      },
+      "required": [
+        "type",
+        "agent",
+        "sessionId"
+      ],
+      "additionalProperties": false,
+      "description": "Bridge reports the DSH GUI's currently viewed session so the pet can drop completion/blocked reminders for it (viewing = acknowledged)."
     }
   }
 }

@@ -161,6 +161,33 @@ test('apply exposes GET /pet/bridge/pending-open that drains on read (B2)', asyn
 })
 
 
+
+test('apply accepts POST /pet/bridge/current (current session reporting)', async () => {
+  FakeWebSocket.reset()
+  let registered
+  const responses = []
+  const res = {
+    writeHead(code, headers) { this.code = code; this.headers = headers },
+    end(body) { responses.push(JSON.parse(body)) },
+  }
+  const webServer = { register(route) { registered = route } }
+  const bridge = apply(makeCtx({ webServer }), { enabled: true, WebSocket: FakeWebSocket })
+  assert.ok(registered)
+
+  const req = {
+    url: '/pet/bridge/current',
+    method: 'POST',
+    on(event, cb) {
+      if (event === 'data') cb(JSON.stringify({ sessionId: 'session-cur' }))
+      if (event === 'end') cb()
+    },
+  }
+  await registered.handler(req, res)
+  assert.equal(responses.at(-1).ok, true)
+  assert.equal(responses.at(-1).current, 'session-cur')
+  bridge.stop()
+})
+
 test('package metadata ships the settings client and dsh.client declaration', () => {
   assert.equal(packageJson.exports['./client'], './lib/client.js')
   assert.ok(packageJson.files.includes('lib/client.js'))

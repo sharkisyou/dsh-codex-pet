@@ -341,6 +341,8 @@ export function createBridge(ctx, options = {}) {
   let lastError = null
   let pullTimer = null
   let lastPushedSignature = null
+  // The DSH GUI session the user is currently viewing (client-reported).
+  let currentSession = null
 
   function status() {
     return {
@@ -433,6 +435,8 @@ export function createBridge(ctx, options = {}) {
         pendingKind: null,
         lastEventAt: 0,
         running: false,
+        // A finished background run awaiting review (session/done sent).
+        done: false,
         approvalCount: 0,
         questionActive: false,
         subagents: 0,
@@ -565,6 +569,9 @@ export function createBridge(ctx, options = {}) {
       if (info.state !== 'idle') {
         entry.state = info.state
         if (info.pendingKind) entry.pendingKind = info.pendingKind
+      } else if (info.done) {
+        // A completed-but-unviewed session restores as 'ready' on reconnect.
+        entry.state = 'ready'
       }
       out.push(entry)
     }
@@ -578,6 +585,7 @@ export function createBridge(ctx, options = {}) {
       const info = ensureSession(sid)
       const entry = { sessionId: sid, title: info.title || sid }
       if (info.state !== 'idle') entry.state = info.state
+      else if (info.done) entry.state = 'ready'
       if (info.lastEventAt > 0) entry.updatedAt = info.lastEventAt
       out.push(entry)
     }
@@ -629,8 +637,30 @@ export function createBridge(ctx, options = {}) {
     if (event.type === 'session/open') {
       const sid = sessionIdOf(event)
       if (sid === null) return
+      // The user opened/viewed this session from the tray: its completion is
+      // consumed (the pet already acknowledged it on click).
+      const info = knownSessions.get(sid)
+      if (info) info.done = false
       openSession(sid, event.reason)
     }
+  }
+
+  // The GUI client reports the session currently being viewed. Switching to a
+  // session consumes its unviewed completion (bridge memory + pet ack).
+  function setCurrent(next) {
+    const value = typeof next === 'string' && next !== '' ? next : null
+    if (value === currentSession) return status()
+    const previous = currentSession
+    currentSession = value
+    if (value !== null) {
+      const info = knownSessions.get(value)
+      if (info) info.done = false
+    }
+    if (connected && socket !== null && value !== null) {
+      send({ type: 'session/current', agent, sessionId: value })
+    }
+    log('current session', { previous, current: value })
+    return status()
   }
 
   function openSession(sid, reason) {
@@ -827,12 +857,41 @@ export function createBridge(ctx, options = {}) {
     ctx.on('agent/status', (payload) => {
       const sid = sessionIdOf(payload && payload.agent)
       if (sid === null) return
-      const info = clearBlocked(sid)
+      const info = ensureSession(sid)
       touch(sid)
-      const status = payload && payload.status === 'running' ? 'running' : 'idle'
-      info.running = status === 'running'
+      const running = Boolean(payload && payload.status === 'running')
+      const wasRunning = info.running
+      info.running = running
+      if (running) {
+        // Any run clears a previous completion.
+        info.done = false
+        if (info.state === 'blocked') info.state = 'idle'
+        computeState(sid)
+        send({ type: 'session/status', agent, sessionId: sid, status: 'running' })
+        return
+      }
+      // Agent went idle.
+      if (info.state === 'blocked') {
+        // Error terminal was already reported; the pet keeps 受阻 until viewed.
+        computeState(sid)
+        send({ type: 'session/status', agent, sessionId: sid, status: 'idle' })
+        return
+      }
+      if (wasRunning && !info.done && info.approvalCount === 0 && !info.questionActive && info.subagents === 0) {
+        // A run finished. The currently-viewed session just pauses; background
+        // sessions become a persistent "已完成" tray item until viewed.
+        if (sid !== currentSession) {
+          info.done = true
+          computeState(sid)
+          send({ type: 'session/done', agent, sessionId: sid, at: Date.now() })
+          return
+        }
+        computeState(sid)
+        send({ type: 'session/status', agent, sessionId: sid, status: 'idle' })
+        return
+      }
       computeState(sid)
-      send({ type: 'session/status', agent, sessionId: sid, status })
+      send({ type: 'session/status', agent, sessionId: sid, status: 'idle' })
     })
 
     ctx.on('agent/error', (payload) => {
@@ -973,6 +1032,7 @@ export function createBridge(ctx, options = {}) {
     sendSync,
     handleIncoming,
     openSession,
+    setCurrent,
     queuePendingOpen,
     drainPendingOpens,
     refreshSessions,
@@ -1092,6 +1152,12 @@ export function apply(ctx, options = {}) {
           // “打开会话”意图取走并导航，不依赖 DSH 官方 allowlist。
           const opens = bridge.drainPendingOpens()
           sendJson(res, 200, { ok: true, opens })
+          return
+        }
+        if (pathname === '/pet/bridge/current' && (req.method === 'POST' || req.method === 'GET')) {
+          const body = await readJsonBody(req)
+          const sessionId = typeof body.sessionId === 'string' ? body.sessionId : undefined
+          sendJson(res, 200, { ok: true, current: sessionId ?? null, ...bridge.setCurrent(sessionId) })
           return
         }
         sendJson(res, 404, { ok: false, error: '未知桥接设置接口' })

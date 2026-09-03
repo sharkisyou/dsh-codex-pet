@@ -11,7 +11,7 @@ export function trayStateLabel(state: string): string {
     case 'waiting': return '需要输入'
     case 'blocked':
     case 'failed': return '受阻'
-    case 'ready': return '就绪'
+    case 'ready': return '已完成'
     case 'running':
     case 'working': return '运行中'
     default: return '空闲'

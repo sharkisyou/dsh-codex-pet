@@ -418,7 +418,11 @@ export function createPetServer(options: PetServerOptions = {}): PetServer {
 
   function currentActivity(): SessionStoreActivity | null {
     const list = activeActivities()
-    return list.length > 0 ? list[0] : null
+    if (list.length === 0) return null
+    // A completed ('ready') session informs the tray, not the pet character's
+    // current pose — prefer a live activity when one exists.
+    const live = list.filter((activity) => activity.activityState !== 'ready')
+    return (live.length > 0 ? live[0] : list[0])
   }
 
   function currentDisplayState(): string {

@@ -49,6 +49,12 @@
     },
     {
       "$ref": "#/definitions/SessionOpenEvent"
+    },
+    {
+      "$ref": "#/definitions/SessionDoneEvent"
+    },
+    {
+      "$ref": "#/definitions/SessionCurrentEvent"
     }
   ],
   "definitions": {
@@ -550,6 +556,52 @@
       ],
       "additionalProperties": false,
       "description": "Reverse event: desktop pet asks the bridge/tool to open a session in its own UI. Implementations may degrade gracefully."
+    },
+    "SessionDoneEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "session/done"
+        },
+        "agent": {
+          "$ref": "#/definitions/Agent"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/SessionId"
+        },
+        "at": {
+          "type": "number",
+          "description": "Completion timestamp (ms)."
+        }
+      },
+      "required": [
+        "type",
+        "agent",
+        "sessionId"
+      ],
+      "additionalProperties": false,
+      "description": "A session's agent finished a run (was running and is now idle). The desktop pet keeps the session in the tray as 'done/已完成' until the user views it."
+    },
+    "SessionCurrentEvent": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "session/current"
+        },
+        "agent": {
+          "$ref": "#/definitions/Agent"
+        },
+        "sessionId": {
+          "$ref": "#/definitions/SessionId"
+        }
+      },
+      "required": [
+        "type",
+        "agent",
+        "sessionId"
+      ],
+      "additionalProperties": false,
+      "description": "Bridge reports the DSH GUI's currently viewed session so the pet can drop completion/blocked reminders for it (viewing = acknowledged)."
     }
   }
 }

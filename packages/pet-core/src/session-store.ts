@@ -144,6 +144,8 @@ export function createPetSessionStore(options: SessionStoreOptions = {}): PetSes
     switch (kind) {
       case 'session/status':
         return { kind: 'agent-status', ts, status: event.status === 'running' ? 'running' : 'idle' }
+      case 'session/done':
+        return { kind: 'done', ts }
       case 'session/error':
       case 'agent/error':
         return { kind: 'error', ts }
@@ -302,6 +304,14 @@ export function createPetSessionStore(options: SessionStoreOptions = {}): PetSes
           const title = typeof entry.title === 'string' ? entry.title : undefined
           if (sid !== null && title !== undefined) titles.set(createSessionKey(agent, sid), title)
         }
+      }
+      return null
+    }
+    if (kind === 'session/current') {
+      // The bridge reports the GUI's currently viewed session: viewing a
+      // completed/blocked session acknowledges it (clears the tray reminder).
+      if (agent !== null && sessionId !== '') {
+        acknowledged.add(createSessionKey(agent, sessionId))
       }
       return null
     }

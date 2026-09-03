@@ -299,6 +299,70 @@ test('titles are folded from session/title events in live Session log entries', 
   assert.equal(s1.title, '最后标题', 'must fold the LATEST session/title event')
 })
 
+test('background agent run finishing emits session/done and snapshots as ready', async () => {
+  const h = createHarness({ sessions: { list: () => [{ header: { id: 's1' }, log: [] }], get: () => undefined } })
+  const ws = h.ws()
+  ws.open()
+  await h.emit('agent/status', { agent: { id: 's1' }, status: 'running' })
+  await h.emit('agent/status', { agent: { id: 's1' }, status: 'idle' })
+
+  const done = FakeWebSocket.sent.filter((event) => event.type === 'session/done').at(-1)
+  assert.ok(done, 'running→idle in a background session must emit session/done')
+  assert.equal(done.sessionId, 's1')
+  assert.equal(typeof done.at, 'number')
+  // Snapshot/directory carry the completed session as ready for reconnect restore.
+  const snap = h.bridge.snapshotSessions().find((entry) => entry.sessionId === 's1')
+  assert.equal(snap && snap.state, 'ready')
+})
+
+test('current session finishing emits session/status idle, not session/done', async () => {
+  const h = createHarness()
+  const ws = h.ws()
+  ws.open()
+  h.bridge.setCurrent('s1')
+  await h.emit('agent/status', { agent: { id: 's1' }, status: 'running' })
+  await h.emit('agent/status', { agent: { id: 's1' }, status: 'idle' })
+  const dones = FakeWebSocket.sent.filter((event) => event.type === 'session/done')
+  assert.equal(dones.length, 0, 'the session the user is viewing must not show 已完成')
+})
+
+test('agent idle without a prior running state stays a plain idle status', async () => {
+  const h = createHarness()
+  const ws = h.ws()
+  ws.open()
+  await h.emit('agent/status', { agent: { id: 's1' }, status: 'idle' })
+  const dones = FakeWebSocket.sent.filter((event) => event.type === 'session/done')
+  assert.equal(dones.length, 0)
+  assert.equal(FakeWebSocket.sent.filter((event) => event.type === 'session/status').at(-1).status, 'idle')
+})
+
+test('setCurrent forwards session/current and consumes an existing completion', async () => {
+  const h = createHarness()
+  const ws = h.ws()
+  ws.open()
+  await h.emit('agent/status', { agent: { id: 's1' }, status: 'running' })
+  await h.emit('agent/status', { agent: { id: 's1' }, status: 'idle' })
+  assert.ok(FakeWebSocket.sent.some((event) => event.type === 'session/done'))
+
+  h.bridge.setCurrent('s1')
+  assert.ok(FakeWebSocket.sent.some((event) => event.type === 'session/current' && event.sessionId === 's1'))
+  const snap = h.bridge.snapshotSessions().find((entry) => entry.sessionId === 's1')
+  assert.equal(snap && snap.state, undefined, 'viewing consumes the completion')
+})
+
+test('opening a done session from the tray consumes its completion memory', async () => {
+  const h = createHarness()
+  const ws = h.ws()
+  ws.open()
+  await h.emit('agent/status', { agent: { id: 's1' }, status: 'running' })
+  await h.emit('agent/status', { agent: { id: 's1' }, status: 'idle' })
+  assert.ok(FakeWebSocket.sent.some((event) => event.type === 'session/done'))
+
+  ws.serverMessage({ type: 'session/open', agent: 'dsh', sessionId: 's1', reason: 'tray' })
+  const snap = h.bridge.snapshotSessions().find((entry) => entry.sessionId === 's1')
+  assert.equal(snap && snap.state, undefined, 'tray open consumes the completion memory')
+})
+
 test('session/open never reads un-injected ctx properties (cordis proxy safety)', async () => {
   // Simulate the cordis proxy: reading un-injected names throws. The bridge
   // must survive a session/open (and openPet) without touching ctx.openSession.

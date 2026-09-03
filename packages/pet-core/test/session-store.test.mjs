@@ -38,3 +38,36 @@ test('sync and acknowledgement helpers work', () => {
   store.markAcknowledged('dsh', 's1')
   assert.equal(store.get('dsh', 's1').reminder, false)
 })
+
+test('session/done keeps the session active as ready until acknowledged (viewed)', () => {
+  const store = createPetSessionStore()
+  store.handle({ type: 'session/status', agent: 'dsh', sessionId: 's1', status: 'running' })
+  store.handle({ type: 'session/done', agent: 'dsh', sessionId: 's1' })
+  const activity = store.get('dsh', 's1')
+  assert.equal(activity.state, 'ready')
+  assert.equal(activity.active, true)
+  assert.equal(activity.reminder, true)
+  assert.deepEqual(store.activities().map((a) => a.key), ['dsh:s1'])
+  // 查看（ack）→ 不再提醒（从托盘消失），机器仍保持 ready
+  store.markAcknowledged('dsh', 's1')
+  assert.equal(store.get('dsh', 's1').reminder, false)
+  assert.equal(store.get('dsh', 's1').state, 'ready')
+})
+
+test('session/current acknowledges the viewed session (viewing clears the reminder)', () => {
+  const store = createPetSessionStore()
+  store.handle({ type: 'session/status', agent: 'dsh', sessionId: 's1', status: 'running' })
+  store.handle({ type: 'session/done', agent: 'dsh', sessionId: 's1' })
+  assert.equal(store.get('dsh', 's1').reminder, true)
+  store.handle({ type: 'session/current', agent: 'dsh', sessionId: 's1' })
+  assert.equal(store.get('dsh', 's1').reminder, false, 'viewing clears the completion reminder')
+})
+
+test('new activity after done returns the session to running', () => {
+  const store = createPetSessionStore()
+  store.handle({ type: 'session/status', agent: 'dsh', sessionId: 's1', status: 'running' })
+  store.handle({ type: 'session/done', agent: 'dsh', sessionId: 's1' })
+  assert.equal(store.get('dsh', 's1').state, 'ready')
+  store.handle({ type: 'session/status', agent: 'dsh', sessionId: 's1', status: 'running' })
+  assert.equal(store.get('dsh', 's1').state, 'running')
+})

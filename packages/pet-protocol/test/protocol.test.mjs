@@ -54,7 +54,9 @@ test('schema file declares the full public event set', () => {
       'HelloEvent',
       'QuestionEndEvent',
       'QuestionStartEvent',
+      'SessionCurrentEvent',
       'SessionDirectoryEvent',
+      'SessionDoneEvent',
       'SessionErrorEvent',
       'SessionOpenEvent',
       'SessionStatusEvent',
@@ -113,6 +115,8 @@ test('runtime validation accepts legal messages', () => {
     { type: 'session/sync', agent: 'dsh', sessionIds: ['s1', 's2'] },
     { type: 'session/directory', agent: 'dsh', sessions: [{ sessionId: 's1', title: 'Task A' }] },
     { type: 'session/open', agent: 'dsh', sessionId: 's1', reason: 'tray' },
+    { type: 'session/done', agent: 'dsh', sessionId: 's1', at: 1788365546447 },
+    { type: 'session/current', agent: 'dsh', sessionId: 's1' },
   ]
   for (const event of validEvents) {
     const result = validatePetEvent(event)
