@@ -179,7 +179,25 @@ export function createPetServer(options: PetServerOptions = {}): PetServer {
     if (logger && typeof logger.info === 'function') logger.info('[desktop-pet]', ...args)
   }
 
+  // 活动签名变化日志：每次 store 变化后打印一次"优先级排序后的活动清单"，
+  // 供排查宠物显示状态/动画选错（如 ready 何时成为当前活动）。
+  let lastActivitySignature: string | null = null
+  function logActivityChange(): void {
+    try {
+      const acts = store.activities()
+      const sig = acts.length === 0
+        ? '(none)'
+        : acts.map((a) => `${a.agent ?? '?'}:${a.sessionId}=${a.state}`).join(' | ')
+      if (sig === lastActivitySignature) return
+      lastActivitySignature = sig
+      log('activity', sig)
+    } catch {
+      // ignore
+    }
+  }
+
   function notify(): void {
+    logActivityChange()
     for (const listener of listeners) {
       try {
         listener()

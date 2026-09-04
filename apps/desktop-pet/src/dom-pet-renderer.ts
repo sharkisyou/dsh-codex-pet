@@ -17,6 +17,7 @@ import {
 } from '@yshark/pet-core'
 
 import { animationNameForState } from './renderer.js'
+import { petLog } from './pet-log.js'
 
 /** 标准 Codex 宠物 atlas 单元格尺寸（8 列 × 9 行，192×208）。 */
 export const CELL_WIDTH = 192
@@ -159,11 +160,28 @@ export function createDomPetRenderer(
 
   function setState(next: string): void {
     const resolved = animationNameForState(next)
-    if (states[resolved] === undefined) return
+    const exists = states[resolved] !== undefined
+    if (!exists) {
+      // 图集没有该动画行：明确回落 idle，而不是静默停留在旧姿势（旧姿势可能
+      // 与真实状态不符，如任务已完成却仍摆着 running）。日志便于排查。
+      petLog('renderer', 'setState animation missing → idle', { next, resolved, previous: stateName })
+      if (states.idle === undefined) return
+      if (stateName === 'idle') return
+      stateName = 'idle'
+      frame = 0
+      animationStartedAt = performance.now()
+      element.dataset.state = next
+      element.dataset.anim = 'idle'
+      paint()
+      return
+    }
+    petLog('renderer', 'setState', { next, resolved, previous: stateName })
     if (stateName === resolved) return
     stateName = resolved
     frame = 0
     animationStartedAt = performance.now()
+    element.dataset.state = next
+    element.dataset.anim = resolved
     paint()
   }
 

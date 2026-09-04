@@ -121,6 +121,67 @@ fn toggle_tray_window(app: tauri::AppHandle) -> Result<bool, String> {
     set_tray_window_visible(app, !visible)
 }
 
+/// 托盘打开会话后把承载 DSH GUI 的浏览器窗口还原并置顶。
+///
+/// 会话切换发生在网页内部（client sessions.open），但浏览器可能被最小化或
+/// 置于后台；这里扫描常见浏览器、把窗口标题含 “DeepSeek” 的窗口还原+置顶。
+/// 找不到时用默认浏览器打开 GUI 地址（持久 cookie 已认证，可直开）。
+#[tauri::command]
+fn focus_dsh_gui() -> Result<(), String> {
+    const PS: &str = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class PetWin32 {
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+}
+"@
+$found = $false
+foreach ($name in @('chrome','msedge','firefox','brave','opera','vivaldi')) {
+  $procs = Get-Process -Name $name -ErrorAction SilentlyContinue |
+    Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -match 'DeepSeek' }
+  foreach ($p in $procs) {
+    [PetWin32]::ShowWindow($p.MainWindowHandle, 9) | Out-Null   # SW_RESTORE
+    [PetWin32]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+    $found = $true
+  }
+  if ($found) { break }
+}
+if (-not $found) {
+  Start-Process 'http://127.0.0.1:3080/'
+}
+"#;
+    let output = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", PS])
+        .output()
+        .map_err(|e| format!("focus_dsh_gui: 无法执行 powershell: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "focus_dsh_gui: powershell 失败: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
+/// 前端日志组件：把一行日志追加到 `%USERPROFILE%\dsh-pet.log`，便于事后排查
+/// Windows 桌宠 UI/动画问题（无 devtools 时）。调用方已 console.log。
+#[tauri::command]
+fn pet_log_append(line: String) -> Result<(), String> {
+    let profile = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".into());
+    let path = std::path::Path::new(&profile).join("dsh-pet.log");
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("无法打开日志文件 {}: {e}", path.display()))?;
+    let _ = writeln!(file, "{line}");
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -195,7 +256,9 @@ fn main() {
             open_settings_window,
             set_tray_window_visible,
             toggle_tray_window,
-            resize_tray_window
+            resize_tray_window,
+            focus_dsh_gui,
+            pet_log_append
         ])
         .run(tauri::generate_context!())
         .expect("error while running desktop-pet");

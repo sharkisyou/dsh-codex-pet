@@ -11,6 +11,7 @@ import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi'
 import type { AppStateSnapshot, ActivitySnapshot, TrayItemSnapshot } from './controller.js'
 import { type ParsedPet } from '@yshark/pet-core'
 import { renderTrayItems } from './tray-ui.js'
+import { petLog } from './pet-log.js'
 
 const kind = detectWindowKind(window.location.search)
 const appEl = document.querySelector<HTMLElement>('#app')
@@ -45,6 +46,17 @@ async function toggleTrayWindow(): Promise<boolean> {
     return await invoke<boolean>('toggle_tray_window')
   } catch {
     return false
+  }
+}
+
+/** 托盘打开会话后，把承载 DSH GUI 的浏览器窗口还原并置顶（会话切换在网页内，
+ *  但浏览器可能被最小化/置于后台）。非 Tauri 环境静默。 */
+async function focusDshGuiWindow(): Promise<void> {
+  if (!isTauri()) return
+  try {
+    await invoke('focus_dsh_gui')
+  } catch {
+    // 聚焦失败不影响会话打开
   }
 }
 
@@ -146,6 +158,7 @@ if (kind === 'pet') {
       trayBox.hidden = false
       renderTrayItems(trayBox, trayItems, (agent, sessionId) => {
         client.openTrayItem(agent, sessionId, 'tray')
+        void focusDshGuiWindow()
       })
     }
 
@@ -153,6 +166,7 @@ if (kind === 'pet') {
       const next = activities ?? []
       const hadAny = trayItems.length > 0
       trayItems = next
+      petLog('ui', 'applyTray', { count: next.length, items: next.map((t) => ({ sid: t.sessionId, state: t.state, rem: t.reminder })) })
       if (next.length === 0) {
         // 无活动：收起（独立窗口隐藏 / 内嵌列表收起）
         trayExpanded = false
@@ -320,6 +334,7 @@ if (kind === 'pet') {
     function applyActivity(activity: ActivitySnapshot): void {
       // 气泡功能已移除：只保留宠物动画状态跟随（气泡文案不再渲染）。
       lastActivityState = activity.displayState || 'idle'
+      petLog('ui', 'applyActivity', { displayState: lastActivityState, state: activity.state, sessionId: activity.sessionId })
       renderer.setState(lastActivityState)
     }
 
@@ -509,6 +524,7 @@ function mountTrayWindow(): void {
     renderTrayItems(list, listItems, (agent, sessionId) => {
       // 标记已读 + 打开 DSH 会话；托盘窗口保持打开
       client.openTrayItem(agent, sessionId, 'tray')
+      void focusDshGuiWindow()
     })
     fitHeight()
   }
