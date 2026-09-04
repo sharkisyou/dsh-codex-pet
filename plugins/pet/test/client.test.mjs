@@ -15,10 +15,11 @@ import { dirname, join } from 'node:path'
 const here = dirname(fileURLToPath(import.meta.url))
 const source = readFileSync(join(here, '../lib/client.js'), 'utf8')
 
-function loadClientModule(fetchImpl) {
+function loadClientModule(fetchImpl, domOverrides = {}) {
   let exportsValue = null
   const sandbox = {
     window: {
+      ...(domOverrides.window ?? {}),
       __ModuleLoader__: {
         load({ factory }) {
           const React = { createElement: (...args) => ({ kind: 'element', args }) }
@@ -29,7 +30,7 @@ function loadClientModule(fetchImpl) {
         },
       },
     },
-    document: undefined,
+    document: domOverrides.document,
     globalThis: null,
     console,
     fetch: fetchImpl ?? (() => { throw new Error('no fetch in test') }),
@@ -42,6 +43,25 @@ function loadClientModule(fetchImpl) {
   vm.createContext(sandbox)
   vm.runInContext(source, sandbox, { filename: 'client.js' })
   return exportsValue
+}
+
+// 默认"页面可见且有焦点"的 DOM mock，供依赖 watching()/样式注入的测试使用。
+function visibleDom() {
+  const listeners = {}
+  const doc = {
+    visibilityState: 'visible',
+    hasFocus: () => true,
+    createElement: () => ({ dataset: {}, textContent: '', remove() {} }),
+    head: { append() {} },
+    addEventListener(type, fn) { (listeners[type] ??= []).push(fn) },
+    removeEventListener() {},
+  }
+  const win = {
+    __ModuleLoader__: { load() {} },
+    addEventListener(type, fn) { (listeners[type] ??= []).push(fn) },
+    removeEventListener() {},
+  }
+  return { doc, win, listeners }
 }
 
 // apply() 里每个 effect 都返回 disposer（轮询 effect 会注册 interval）；
@@ -160,6 +180,7 @@ test('client 在无 remote/sessions/fetch 服务时优雅降级', () => {
 
 test('client 上报当前会话变化到 /pet/bridge/current（完成后查看清除）', async () => {
   const posted = []
+  const dom = visibleDom()
   const mod = loadClientModule(async (url, opts) => {
     const u = String(url)
     if (u.endsWith('/pet/bridge/current')) {
@@ -170,7 +191,7 @@ test('client 上报当前会话变化到 /pet/bridge/current（完成后查看�
       return { ok: true, json: async () => ({ ok: true, opens: [] }) }
     }
     throw new Error('unexpected url ' + u)
-  })
+  }, { window: dom.win, document: dom.doc })
   const listeners = []
   const snap = { current: 'session-cur' }
   const sessionsSvc = {
@@ -189,5 +210,11 @@ test('client 上报当前会话变化到 /pet/bridge/current（完成后查看�
   for (const fn of listeners) fn()
   await new Promise((resolve) => setTimeout(resolve, 40))
   assert.ok(posted.some((p) => p.sessionId === 'session-next'), 'current change must be reported')
+
+  // 页面不可见（浏览器最小化/切走）→ 上报 null：后台会话完成也会进托盘
+  dom.doc.visibilityState = 'hidden'
+  for (const fn of dom.listeners.visibilitychange ?? []) fn()
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  assert.ok(posted.some((p) => p.sessionId === null), 'hidden page must report no current session')
   ctx.dispose()
 })

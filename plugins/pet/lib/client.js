@@ -212,6 +212,9 @@ window.__ModuleLoader__.load({
 
       // 上报 GUI 当前会话 → 宿主据此把"非当前会话"的完成态显示到托盘；
       // 当我切到某个会话时宿主会清除它的"已完成"待办（视为已查看）。
+      // 关键：只有用户"真的在看"（页面可见且有焦点）才上报当前会话；
+      // 浏览器最小化/被遮挡/切到别的应用时上报 null → 后台会话（即使它是
+      // GUI 里选中的那个）完成也会以"已完成"出现在托盘，供用户回来查看。
       if (ctx && typeof ctx.effect === 'function') {
         ctx.effect(() => {
           let sessions
@@ -235,8 +238,17 @@ window.__ModuleLoader__.load({
               body: JSON.stringify({ sessionId: current || null }),
             }).catch(() => { lastReported = undefined })
           }
+          const watching = () => {
+            if (typeof document === 'undefined') return false
+            if (document.visibilityState !== undefined && document.visibilityState !== 'visible') return false
+            return typeof document.hasFocus !== 'function' || document.hasFocus()
+          }
           const read = () => {
             try {
+              if (!watching()) {
+                report(null)
+                return
+              }
               const snap = sessions.list.getSnapshot()
               const current = snap && typeof snap.current === 'string' && snap.current !== ''
                 ? snap.current
@@ -247,6 +259,15 @@ window.__ModuleLoader__.load({
             }
           }
           read()
+          const onVisibility = () => read()
+          const onFocus = () => read()
+          if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+            document.addEventListener('visibilitychange', onVisibility)
+          }
+          if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+            window.addEventListener('focus', onFocus)
+            window.addEventListener('blur', onFocus)
+          }
           let unsubscribe = null
           if (typeof sessions.list.subscribe === 'function') {
             try {
@@ -254,6 +275,16 @@ window.__ModuleLoader__.load({
             } catch {
               unsubscribe = null
             }
+          }
+          return () => {
+            if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+              document.removeEventListener('visibilitychange', onVisibility)
+            }
+            if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+              window.removeEventListener('focus', onFocus)
+              window.removeEventListener('blur', onFocus)
+            }
+            if (typeof unsubscribe === 'function') unsubscribe()
           }
           return () => { if (typeof unsubscribe === 'function') unsubscribe() }
         }, 'dsh-pet: current session reporting')
