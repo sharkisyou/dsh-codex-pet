@@ -41,6 +41,8 @@ export interface SettingsApp {
   markMarketUninstalled(payload: { slug: string }): void
   /** 某只市场宠物的缩略图（market/thumb 响应，data URL）。 */
   setMarketThumb(payload: { slug: string; dataUrl: string }): void
+  /** 某只市场宠物缩略图生成失败（market/thumb-error 响应）；前端静默退避重试。 */
+  setMarketThumbError(payload: { slug: string }): void
   /** 某只市场宠物的详情（market/pet 响应，用于大图预览）。 */
   setMarketPet(payload: { slug: string; pet: ParsedPet | null; spriteDataUrl: string | null }): void
 }
@@ -507,6 +509,9 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   // marketThumbCache 保存已收到的 data URL，列表重建后直接回填，避免空白。
   const marketThumbRequested = new Set<string>()
   const marketThumbCache = new Map<string, string>()
+  // 生成失败后的退避重试：3s → 6s → 12s，最多 3 次；CDN 突发多是瞬时抖动。
+  const marketThumbRetries = new Map<string, number>()
+  const MAX_MARKET_THUMB_RETRIES = 3
   let marketThumbObserver: IntersectionObserver | null = null
 
   function clearPrefetch(): void {
@@ -801,9 +806,30 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
 
   function setMarketThumb(payload: { slug: string; dataUrl: string }): void {
     marketThumbCache.set(payload.slug, payload.dataUrl)
+    marketThumbRetries.delete(payload.slug)
     marketList.querySelectorAll<HTMLElement>('[data-market-slug]').forEach((el) => {
       if (el.dataset.marketSlug === payload.slug) applyMarketThumb(el, payload.dataUrl)
     })
+  }
+
+  function setMarketThumbError(payload: { slug: string }): void {
+    const attempts = (marketThumbRetries.get(payload.slug) ?? 0) + 1
+    marketThumbRetries.set(payload.slug, attempts)
+    if (attempts > MAX_MARKET_THUMB_RETRIES) {
+      // 重试耗尽：留空占位；解除标记，允许用户翻页/重建后再次请求。
+      marketThumbRetries.delete(payload.slug)
+      marketThumbRequested.delete(payload.slug)
+      return
+    }
+    // 当前页或预取页的宠物都可重试。
+    const pet = marketPets.find((candidate) => candidate.slug === payload.slug)
+      ?? prefetchedResult?.pets.find((candidate) => candidate.slug === payload.slug)
+    if (!pet) return
+    const delay = 3000 * 2 ** (attempts - 1)
+    setTimeout(() => {
+      if (marketThumbCache.has(payload.slug)) return // 重试前已成功（如翻页回填）
+      client.requestMarketThumb(pet)
+    }, delay)
   }
 
   function setMarketPet(payload: { slug: string; pet: ParsedPet | null; spriteDataUrl: string | null }): void {
@@ -1207,6 +1233,7 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     markMarketInstalled,
     markMarketUninstalled,
     setMarketThumb,
+    setMarketThumbError,
     setMarketPet,
   }
   return app

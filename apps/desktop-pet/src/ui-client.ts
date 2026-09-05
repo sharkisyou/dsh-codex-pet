@@ -29,6 +29,7 @@ export interface UiClientHandlers {
   onMarketInstalled?(info: { id: string; displayName: string; sourceDir: string }): void
   onMarketUninstalled?(payload: { slug: string }): void
   onMarketThumb?(payload: { slug: string; dataUrl: string }): void
+  onMarketThumbError?(payload: { slug: string }): void
   onMarketPet?(payload: { slug: string; pet: ParsedPet | null; spriteDataUrl: string | null }): void
   onError?(message: string): void
   onStatus?(connected: boolean): void
@@ -220,6 +221,9 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
         break
       case 'market/thumb':
         handlers.onMarketThumb?.({ slug: message.slug, dataUrl: message.dataUrl })
+        break
+      case 'market/thumb-error':
+        handlers.onMarketThumbError?.({ slug: message.slug })
         break
       case 'market/pet':
         handlers.onMarketPet?.({ slug: message.slug, pet: message.pet ?? null, spriteDataUrl: message.spriteDataUrl ?? null })

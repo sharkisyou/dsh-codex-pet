@@ -53,6 +53,7 @@ export type UiServerMessage =
   | { kind: 'market/installed'; pet: { id: string; displayName: string; sourceDir: string } }
   | { kind: 'market/uninstalled'; slug: string }
   | { kind: 'market/thumb'; slug: string; dataUrl: string }
+  | { kind: 'market/thumb-error'; slug: string }
   | { kind: 'market/pet'; slug: string; pet: ParsedPet | null; spriteDataUrl: string | null }
   | { kind: 'error'; message: string }
 
@@ -251,7 +252,9 @@ export function createUiGateway(options: UiGatewayOptions): UiGateway {
         }
         const dataUrl = await market.getThumbnail(pet)
         if (dataUrl === null) {
-          send(socket, { kind: 'error', message: `缩略图生成失败: ${pet.slug}` })
+          // 缩略图只是增强项：失败走结构化事件（前端静默退避重试），
+          // 不冒泡成全局错误行「缩略图生成失败」。
+          send(socket, { kind: 'market/thumb-error', slug: pet.slug } satisfies UiServerMessage)
           return
         }
         send(socket, { kind: 'market/thumb', slug: pet.slug, dataUrl } satisfies UiServerMessage)

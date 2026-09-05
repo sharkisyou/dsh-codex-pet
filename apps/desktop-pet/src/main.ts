@@ -421,6 +421,9 @@ if (kind === 'pet') {
         onMarketThumb(payload) {
           app?.setMarketThumb(payload)
         },
+        onMarketThumbError(payload) {
+          app?.setMarketThumbError(payload)
+        },
         onMarketPet(payload) {
           app?.setMarketPet(payload)
         },

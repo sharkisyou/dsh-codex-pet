@@ -24,6 +24,7 @@
   - `safeSlug`：slug 只保留 `[a-z0-9-_]`，拒绝路径穿越。
   - 下载限大小（sprite 25MB / zip 50MB）并设超时。
 - **缩略图** `getThumbnail(pet)`：服务端下载 sprite → **sharp 裁第一帧（192×208）→ 缩放 96×104 → webp data URL**（约 9KB，再缓存）。前端不直连 CDN。
+  - **下载健壮性**（2026-09 修复「缩略图生成失败」）：页面首屏会一次性并发请求 ~27 张 2MB 级 sprite，原 20s 单次超时 + 无并发上限 + 429/5xx 不重试，导致 CDN 突发下部分下载被终止/超时，3 次重试全灭后 `getThumbnail` 返回 null。现改为：**单次下载超时 60s**（`DEFAULT_DOWNLOAD_TIMEOUT_MS`，实测 20s 场景 5/27 失败、60s 场景 0/27）、**下载信号量上限 6**（`downloadConcurrency` 可调）、**429/5xx 也退避重试**（404 等直接失败）、小尺寸 sprite 首帧兜底裁剪（`extract` 不越界）、失败记录 `[market]` 警告日志。失败经 `market/thumb-error` 结构化事件下发，前端**静默退避重试**（3s→6s→12s，最多 3 次），不再冒泡为设置窗全局错误行。
 - **详情** `getPetDetail(pet)`：下载 pet.json 用 `parsePetJson` 解析（动画状态 + 描述，失败返回 null 由前端标准动画兜底）+ 整张 sprite 转 data URL（约 2.9MB），缓存。
 - **卸载** `uninstallPet(slug)`：`safeSlug` 校验后删除 `~/.codex/pets/<slug>/`。
 - **图片类缓存带 LRU 上限**（防止预取/翻页无限增长，曾触发 JS heap OOM）：sprite 全量缓存上限 **60 张**（≈180MB）、详情缓存上限 **20 条**（≈60MB，大头是 2.9MB base64）、缩略图上限 **2000 张**；超过按最近使用淘汰最旧。manifest 仍是时间 TTL（48h）。
@@ -38,6 +39,7 @@
 | `market/install { pet }` → `market/installed { id, displayName, sourceDir }` | 安装；成功后刷新并广播本地宠物库 |
 | `market/uninstall { slug }` → `market/uninstalled { slug }` | 卸载；成功后刷新并广播本地宠物库 |
 | `market/thumb { pet }` → `market/thumb { slug, dataUrl }` | 缩略图（服务端生成） |
+| `market/thumb { pet }` → `market/thumb-error { slug }` | 缩略图生成失败（下载重试耗尽/裁图失败）；前端退避重试，不触发全局错误行 |
 | `market/pet { pet }` → `market/pet { slug, pet, spriteDataUrl }` | 详情：解析后的 `ParsedPet`（可空，前端用标准动画兜底）+ 整张 sprite data URL（大图动画预览） |
 
 ### 前端（设置窗「市场」独立 tab）
@@ -56,5 +58,5 @@
 - 修改：`ui-gateway.ts`（市场消息：list/install/thumb/pet）、`server-entry.ts`（注入 market）、`ui-client.ts`（请求方法 + 处理器）、`settings-app.ts`（市场 tab UI + 类型筛选 + 详情弹窗）、`main.ts`（市场消息接线）。
 - 新增依赖：`adm-zip`（zip 解压）、`sharp`（缩略图/详情裁图）。
 - 数据：安装会把宠物写入 `~/.codex/pets/<slug>/`，覆盖 ADR 0003「桌宠不负责导入」的旧决策——安装是用户明确的动作，与 pet-library 的"只读列出"定位共存。
-- 后续候选：更新检测（有新版本提示重装）、一键更新、安装记录、缩略图并发限流。
+- 后续候选：更新检测（有新版本提示重装）、一键更新、安装记录。（缩略图并发限流已随下载健壮性修复落地，见上。）
 - 已实现补充：卸载（`market/uninstall` → 删除 `~/.codex/pets/<slug>/` 并刷新本地库；本地「宠物」页卡片「删除」按钮 + 详情弹窗「卸载」按钮）。

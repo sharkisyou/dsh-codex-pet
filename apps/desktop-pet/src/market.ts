@@ -33,7 +33,14 @@ export const DEFAULT_USER_AGENT = 'dsh-pet-market/1.0'
 export const DEFAULT_CACHE_TTL_MS = 48 * 60 * 60 * 1000
 export const DEFAULT_MAX_SPRITE_BYTES = 25 * 1024 * 1024
 export const DEFAULT_MAX_ZIP_BYTES = 50 * 1024 * 1024
-export const DEFAULT_DOWNLOAD_TIMEOUT_MS = 20000
+/**
+ * 单次下载超时。petdex sprite 单个 1.2~3.2MB，页面渲染会并发请求 ~27 张；
+ * 在 CDN 突发下 20s 经常被打穿（曾实测单张 20.1s 后才完成），3 次重试全部
+ * 超时会直接导致「缩略图生成失败」。放宽到 60s 后同场景实测 0 失败。
+ */
+export const DEFAULT_DOWNLOAD_TIMEOUT_MS = 60000
+/** 下载信号量上限：限制并发整图下载，避免页面首屏 27 张 2MB 并发打爆 CDN 连接。 */
+export const DEFAULT_DOWNLOAD_CONCURRENCY = 6
 export const DEFAULT_ATLAS_ROWS = 9
 
 export interface MarketListFilter {
@@ -70,6 +77,8 @@ export interface MarketOptions {
   maxSpriteBytes?: number
   maxZipBytes?: number
   downloadTimeoutMs?: number
+  /** 并发下载上限（默认 6）。页面首屏一次并发请求 ~27 张缩略图，不限制会打爆 CDN。 */
+  downloadConcurrency?: number
 }
 
 export interface Market {
@@ -114,6 +123,7 @@ export function createMarket(options: MarketOptions = {}): Market {
   const maxSpriteBytes = options.maxSpriteBytes ?? DEFAULT_MAX_SPRITE_BYTES
   const maxZipBytes = options.maxZipBytes ?? DEFAULT_MAX_ZIP_BYTES
   const downloadTimeoutMs = options.downloadTimeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS
+  const downloadConcurrency = Math.max(1, options.downloadConcurrency ?? DEFAULT_DOWNLOAD_CONCURRENCY)
   const fetchImpl = options.fetchImpl ?? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init))
   const home = options.home !== undefined ? options.home : (typeof process !== 'undefined' ? process.env.HOME : null)
   const installRoot = options.installRoot ?? (home ? `${home}/.codex/pets` : '')
@@ -173,7 +183,38 @@ export function createMarket(options: MarketOptions = {}): Market {
     return require('node:fs/promises') as typeof import('node:fs/promises')
   }
 
-  async function fetchRetry(url: string, attempts = 3): Promise<Response> {
+  // 下载信号量：把并发整图下载限制在 downloadConcurrency 内。
+  // 页面首屏会一次性发出 ~27 张缩略图请求，若全部同时下载 2MB 级 sprite，
+  // CDN 会终止部分连接（实测 "terminated" / "fetch failed"）。
+  let activeDownloads = 0
+  const downloadWaiters: Array<() => void> = []
+
+  async function withDownloadSlot<T>(fn: () => Promise<T>): Promise<T> {
+    while (activeDownloads >= downloadConcurrency) {
+      await new Promise<void>((resolve) => downloadWaiters.push(resolve))
+    }
+    activeDownloads++
+    try {
+      return await fn()
+    } finally {
+      activeDownloads--
+      downloadWaiters.shift()?.()
+    }
+  }
+
+  function isRetryableStatus(status: number): boolean {
+    return status === 429 || (status >= 500 && status < 600)
+  }
+
+  /**
+   * 带超时+重试的请求解码（headers 与 body 都受超时保护）。
+   * consume 在定时器生效期间运行，body 中途停滞同样触发 abort。
+   */
+  async function fetchRetryDecode<T>(
+    url: string,
+    consume: (response: Response) => Promise<T>,
+    attempts = 3,
+  ): Promise<T> {
     let lastError: unknown = null
     for (let attempt = 1; attempt <= attempts; attempt++) {
       const controller = new AbortController()
@@ -184,26 +225,37 @@ export function createMarket(options: MarketOptions = {}): Market {
           signal: controller.signal,
           redirect: 'follow',
         })
-        return response
+        // 网络/代理抖动或 CDN 突发：429/5xx 也值得退避重试（404 等直接走 consume 的失败分支）。
+        if (!response.ok && isRetryableStatus(response.status)) {
+          lastError = new Error(`HTTP ${response.status}`)
+        } else {
+          return await consume(response)
+        }
       } catch (error) {
         lastError = error
-        // 网络/代理抖动：短暂退避后重试。
-        await new Promise((resolve) => setTimeout(resolve, 500 * attempt))
       } finally {
         clearTimeout(timer)
       }
+      if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, 500 * attempt))
     }
     throw lastError instanceof Error ? lastError : new Error(String(lastError))
   }
 
+  async function fetchRetry(url: string, attempts = 3): Promise<Response> {
+    return fetchRetryDecode(url, (response) => Promise.resolve(response), attempts)
+  }
+
   async function download(url: string, maxBytes: number): Promise<Buffer> {
-    const response = await fetchRetry(url)
-    if (!response.ok) throw new Error(`下载失败: HTTP ${response.status}`)
-    const buffer = Buffer.from(await response.arrayBuffer())
-    if (buffer.byteLength > maxBytes) {
-      throw new Error(`文件过大: ${(buffer.byteLength / 1024 / 1024).toFixed(1)}MB`)
-    }
-    return buffer
+    return withDownloadSlot(() =>
+      fetchRetryDecode(url, async (response) => {
+        if (!response.ok) throw new Error(`下载失败: HTTP ${response.status}`)
+        const buffer = Buffer.from(await response.arrayBuffer())
+        if (buffer.byteLength > maxBytes) {
+          throw new Error(`文件过大: ${(buffer.byteLength / 1024 / 1024).toFixed(1)}MB`)
+        }
+        return buffer
+      }),
+    )
   }
 
   async function loadManifest(): Promise<MarketManifest> {
@@ -319,15 +371,20 @@ export function createMarket(options: MarketOptions = {}): Market {
         putSprite(pet.slug, sprite)
       }
       // 裁出 sprite 首帧（左上 192x208）并缩到 96x104，转 webp 减小体积。
+      // 小尺寸/非标准 sprite 兜底为整体裁剪，避免 extract 越界导致整张失败。
+      const meta = await sharp(sprite).metadata()
+      const frameWidth = Math.min(192, meta.width ?? 192)
+      const frameHeight = Math.min(208, meta.height ?? 208)
       const thumb = await sharp(sprite)
-        .extract({ left: 0, top: 0, width: 192, height: 208 })
+        .extract({ left: 0, top: 0, width: frameWidth, height: frameHeight })
         .resize(96, 104, { fit: 'fill' })
         .webp({ quality: 82 })
         .toBuffer()
       const dataUrl = `data:image/webp;base64,${thumb.toString('base64')}`
       cacheThumb(pet.slug, dataUrl)
       return dataUrl
-    } catch {
+    } catch (error) {
+      console.warn(`[market] thumbnail failed for ${pet.slug}: ${error instanceof Error ? error.message : String(error)}`)
       return null
     }
   }
