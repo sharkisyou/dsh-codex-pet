@@ -120,8 +120,7 @@ test('getThumbnail：下载超时返回 null 而不抛出', async () => {
   assert.equal(await market.getThumbnail(marketPet('https://petdex.test/slow.webp')), null)
 })
 
-test('market/thumb 失败发送结构化 thumb-error，而非全局 error 弹错', async () => {
-  const controller = {
+test('market/thumb 失败发送结构化 thumb-error，而非全局 error 弹错', async () => {  const controller = {
     subscribe: () => () => {},
     stateSnapshot: async () => ({}),
   } as any
@@ -141,4 +140,26 @@ test('market/thumb 失败发送结构化 thumb-error，而非全局 error 弹错
   const thumbError = socket.sent.find((m: any) => m.kind === 'market/thumb-error')
   assert.ok(thumbError, '应发送 market/thumb-error')
   assert.equal((thumbError as any).slug, 'sahil')
+})
+
+test('market/list 失败发送结构化 list-error（前端须据此复位加载态）', async () => {
+  const controller = {
+    subscribe: () => () => {},
+    stateSnapshot: async () => ({}),
+  } as any
+  const market = {
+    listPets: async () => { throw new Error('fetch failed') },
+  } as unknown as Market
+  const gateway = createUiGateway({ controller, market })
+  const socket = new FakeSocket()
+  gateway.handleConnection(socket)
+
+  socket.emit('message', JSON.stringify({ kind: 'market/list' }))
+  await new Promise((resolve) => setTimeout(resolve, 20))
+
+  const errors = socket.sent.filter((m: any) => m.kind === 'error')
+  assert.deepEqual(errors, [], '列表失败应走结构化事件')
+  const listError = socket.sent.find((m: any) => m.kind === 'market/list-error')
+  assert.ok(listError, '应发送 market/list-error')
+  assert.equal((listError as any).message, 'fetch failed')
 })

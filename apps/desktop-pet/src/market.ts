@@ -83,6 +83,11 @@ export interface MarketOptions {
   downloadTimeoutMs?: number
   /** 并发下载上限（默认 12）。页面首屏一次并发请求 ~27 张缩略图，不限制会打爆 CDN。 */
   downloadConcurrency?: number
+  /**
+   * manifest 磁盘缓存文件路径。服务重启/网络抖动时，市场列表仍可用
+   * （last-known-good，带 TTL；线上失败时回退过期缓存并告警）。
+   */
+  manifestCacheFile?: string
 }
 
 export interface Market {
@@ -128,6 +133,7 @@ export function createMarket(options: MarketOptions = {}): Market {
   const maxZipBytes = options.maxZipBytes ?? DEFAULT_MAX_ZIP_BYTES
   const downloadTimeoutMs = options.downloadTimeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS
   const downloadConcurrency = Math.max(1, options.downloadConcurrency ?? DEFAULT_DOWNLOAD_CONCURRENCY)
+  const manifestCacheFile = options.manifestCacheFile ?? ''
   const fetchImpl = options.fetchImpl ?? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init))
   const home = options.home !== undefined ? options.home : (typeof process !== 'undefined' ? process.env.HOME : null)
   const installRoot = options.installRoot ?? (home ? `${home}/.codex/pets` : '')
@@ -262,15 +268,61 @@ export function createMarket(options: MarketOptions = {}): Market {
     )
   }
 
+  async function loadManifestFromDisk(): Promise<{ manifest: MarketManifest; savedAt: number } | null> {
+    if (!manifestCacheFile) return null
+    try {
+      const fs = await fsModule()
+      const text = await fs.readFile(manifestCacheFile, 'utf8')
+      const data = JSON.parse(text) as { savedAt?: number; manifest?: MarketManifest }
+      if (typeof data.savedAt !== 'number' || !data.manifest || !Array.isArray(data.manifest.pets)) return null
+      return { manifest: data.manifest, savedAt: data.savedAt }
+    } catch {
+      return null // 文件不存在/损坏 → 当作没有磁盘缓存
+    }
+  }
+
+  async function saveManifestToDisk(manifest: MarketManifest): Promise<void> {
+    if (!manifestCacheFile) return
+    try {
+      const fs = await fsModule()
+      const path = require('node:path') as typeof import('node:path')
+      await fs.mkdir(path.dirname(manifestCacheFile), { recursive: true })
+      // 原子写：先写临时文件再改名，避免进程中断留下半写文件。
+      await fs.writeFile(`${manifestCacheFile}.tmp`, JSON.stringify({ savedAt: Date.now(), manifest }), 'utf8')
+      await fs.rename(`${manifestCacheFile}.tmp`, manifestCacheFile)
+    } catch (error) {
+      console.warn(`[market] manifest 磁盘缓存写入失败: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   async function loadManifest(): Promise<MarketManifest> {
     if (cachedManifest !== null && Date.now() - cachedAt < cacheTtlMs) return cachedManifest
-    const response = await fetchRetry(manifestUrl)
-    if (!response.ok) throw new Error(`manifest 拉取失败: HTTP ${response.status}`)
-    const data = (await response.json()) as Partial<MarketManifest>
-    if (!Array.isArray(data.pets)) throw new Error('manifest 格式不正确：缺少 pets 数组')
-    cachedManifest = { generatedAt: String(data.generatedAt ?? ''), total: data.pets.length, pets: data.pets }
-    cachedAt = Date.now()
-    return cachedManifest
+    const disk = await loadManifestFromDisk()
+    // 磁盘缓存未过期：免网络，重启后市场页秒开。
+    if (disk && Date.now() - disk.savedAt < cacheTtlMs) {
+      cachedManifest = disk.manifest
+      cachedAt = disk.savedAt
+      return cachedManifest
+    }
+    try {
+      const response = await fetchRetry(manifestUrl)
+      if (!response.ok) throw new Error(`manifest 拉取失败: HTTP ${response.status}`)
+      const data = (await response.json()) as Partial<MarketManifest>
+      if (!Array.isArray(data.pets)) throw new Error('manifest 格式不正确：缺少 pets 数组')
+      cachedManifest = { generatedAt: String(data.generatedAt ?? ''), total: data.pets.length, pets: data.pets }
+      cachedAt = Date.now()
+      await saveManifestToDisk(cachedManifest)
+      return cachedManifest
+    } catch (error) {
+      // 线上失败：回退到磁盘上的 last-known-good（即便已过期，也比"市场不可用"强）。
+      if (disk) {
+        console.warn(`[market] manifest 线上拉取失败，使用磁盘缓存: ${error instanceof Error ? error.message : String(error)}`)
+        cachedManifest = disk.manifest
+        cachedAt = disk.savedAt
+        return cachedManifest
+      }
+      throw error
+    }
   }
 
   function matches(pet: MarketPet, query: string): boolean {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createRequire } from 'node:module'
-import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -209,6 +209,85 @@ test('installPet 校验失败时回滚，不留临时目录', async () => {
     assert.ok(result.error.length > 0)
     const dirs = await readdir(root)
     assert.equal(dirs.length, 0) // 没有残留
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('manifest 落盘：成功拉取后写入缓存；新实例网络失败时回退磁盘（last-known-good）', async () => {
+  const root = await makeTempRoot()
+  try {
+    const cacheFile = join(root, 'manifest-cache.json')
+    const pets = [
+      { slug: 'a', displayName: 'A', kind: 'character', submittedBy: null, spritesheetUrl: null, petJsonUrl: null, zipUrl: null },
+      { slug: 'b', displayName: 'B', kind: 'creature', submittedBy: null, spritesheetUrl: null, petJsonUrl: null, zipUrl: null },
+    ]
+    const okFetch = fakeFetch({
+      'https://petdex.test/manifest': { body: JSON.stringify({ generatedAt: 'now', total: 2, pets }) },
+    })
+    const first = createMarket({
+      manifestUrl: 'https://petdex.test/manifest',
+      fetchImpl: okFetch,
+      manifestCacheFile: cacheFile,
+    })
+    const list = await first.listPets({ pageSize: 100 })
+    assert.equal(list.total, 2)
+    const saved = JSON.parse(await readFile(cacheFile, 'utf8'))
+    assert.ok(typeof saved.savedAt === 'number' && saved.savedAt > 0, '缓存文件应含 savedAt')
+    assert.equal(saved.manifest.total, 2)
+
+    // 新实例（模拟重启）：网络全挂 → 磁盘缓存兜底，市场仍可用
+    const failFetch = (async () => { throw new Error('fetch failed') }) as typeof fetch
+    const second = createMarket({
+      manifestUrl: 'https://petdex.test/manifest',
+      fetchImpl: failFetch,
+      manifestCacheFile: cacheFile,
+    })
+    const list2 = await second.listPets({ pageSize: 100 })
+    assert.equal(list2.total, 2)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('manifest 缓存过期时优先线上；线上失败则回退过期缓存', async () => {
+  const root = await makeTempRoot()
+  try {
+    const cacheFile = join(root, 'manifest-cache.json')
+    const stale = {
+      savedAt: Date.now() - 999 * 60 * 60 * 1000,
+      manifest: {
+        generatedAt: 'long-ago',
+        total: 1,
+        pets: [{ slug: 'stale', displayName: 'Stale', kind: null, submittedBy: null, spritesheetUrl: null, petJsonUrl: null, zipUrl: null }],
+      },
+    }
+    await writeFile(cacheFile, JSON.stringify(stale), 'utf8')
+
+    const failFetch = (async () => { throw new Error('fetch failed') }) as typeof fetch
+    const market = createMarket({
+      manifestUrl: 'https://petdex.test/manifest',
+      fetchImpl: failFetch,
+      manifestCacheFile: cacheFile,
+      cacheTtlMs: 1, // 磁盘缓存必然过期 → 尝试线上 → 失败 → 回退
+    })
+    const list = await market.listPets({ pageSize: 100 })
+    assert.equal(list.pets[0].slug, 'stale')
+
+    // 线上恢复：过期缓存被替换为新 manifest
+    const okFetch = fakeFetch({
+      'https://petdex.test/manifest': {
+        body: JSON.stringify({ generatedAt: 'now', total: 1, pets: [{ slug: 'fresh', displayName: 'Fresh', kind: null, submittedBy: null, spritesheetUrl: null, petJsonUrl: null, zipUrl: null }] }),
+      },
+    })
+    const market2 = createMarket({
+      manifestUrl: 'https://petdex.test/manifest',
+      fetchImpl: okFetch,
+      manifestCacheFile: cacheFile,
+      cacheTtlMs: 1,
+    })
+    const list2 = await market2.listPets({ pageSize: 100 })
+    assert.equal(list2.pets[0].slug, 'fresh')
   } finally {
     await rm(root, { recursive: true, force: true })
   }

@@ -26,6 +26,7 @@ export interface UiClientHandlers {
   onTray?(tray: TrayItemSnapshot[]): void
   onAllActivities?(activities: TrayItemSnapshot[]): void
   onMarketList?(payload: { pets: MarketPet[]; total: number; page: number; pageSize: number; kinds: string[] }): void
+  onMarketListError?(message: string): void
   onMarketInstalled?(info: { id: string; displayName: string; sourceDir: string }): void
   onMarketUninstalled?(payload: { slug: string }): void
   onMarketThumb?(payload: { slug: string; dataUrl: string }): void
@@ -212,6 +213,9 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
           pageSize: typeof message.pageSize === 'number' ? message.pageSize : (message.pets ?? []).length,
           kinds: Array.isArray(message.kinds) ? message.kinds : [],
         })
+        break
+      case 'market/list-error':
+        handlers.onMarketListError?.(message.message ?? '未知错误')
         break
       case 'market/installed':
         handlers.onMarketInstalled?.(message.pet)

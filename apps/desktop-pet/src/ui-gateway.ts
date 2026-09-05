@@ -50,6 +50,7 @@ export type UiServerMessage =
   | { kind: 'allActivities'; allActivities: AppStateSnapshot['allActivities'] }
   | { kind: 'pet'; id: string; pet: ParsedPet; spriteDataUrl: string; atlasRows: number }
   | { kind: 'market/list'; pets: MarketPet[]; total: number; page: number; pageSize: number; kinds: string[] }
+  | { kind: 'market/list-error'; message: string }
   | { kind: 'market/installed'; pet: { id: string; displayName: string; sourceDir: string } }
   | { kind: 'market/uninstalled'; slug: string }
   | { kind: 'market/thumb'; slug: string; dataUrl: string }
@@ -192,7 +193,11 @@ export function createUiGateway(options: UiGatewayOptions): UiGateway {
             kinds,
           } satisfies UiServerMessage)
         } catch (error) {
-          send(socket, { kind: 'error', message: `市场加载失败: ${error instanceof Error ? error.message : String(error)}` })
+          // 结构化错误：前端必须在失败后复位加载态（否则「下一页/搜索」永久无响应）。
+          send(socket, {
+            kind: 'market/list-error',
+            message: error instanceof Error ? error.message : String(error),
+          } satisfies UiServerMessage)
         }
         return
       }

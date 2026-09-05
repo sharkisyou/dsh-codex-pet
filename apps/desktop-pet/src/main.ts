@@ -412,6 +412,9 @@ if (kind === 'pet') {
         onMarketList(payload) {
           app?.setMarketPets(payload)
         },
+        onMarketListError(message) {
+          app?.setMarketListError(message)
+        },
         onMarketInstalled(info) {
           app?.markMarketInstalled(info)
         },

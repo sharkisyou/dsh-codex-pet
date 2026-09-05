@@ -9,11 +9,12 @@
 
 import { createPetServer } from './server.js'
 import { createPetLibrary } from './pet-library.js'
-import { createSettingsStore } from './settings-store.js'
+import { createSettingsStore, resolveAppDataDir } from './settings-store.js'
 import { createAppController } from './controller.js'
 import { createUiGateway, UI_PROTOCOL_PATH } from './ui-gateway.js'
 import { createMarket } from './market.js'
 import { ensureBridgePlugin } from './ensure-bridge-plugin.js'
+import { join } from 'node:path'
 
 const library = createPetLibrary()
 const store = createSettingsStore()
@@ -23,6 +24,8 @@ const market = createMarket({
   cacheTtlMs: Number.isFinite(marketTtlHours) && marketTtlHours > 0
     ? Math.round(marketTtlHours * 60 * 60 * 1000)
     : undefined,
+  // manifest 落盘：重启不依赖 CDN，线上抖动时市场仍可用 last-known-good。
+  manifestCacheFile: join(resolveAppDataDir(), 'market-manifest.json'),
 })
 
 let gateway: ReturnType<typeof createUiGateway>

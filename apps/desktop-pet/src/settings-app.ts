@@ -35,6 +35,8 @@ export interface SettingsApp {
   setPetPayload(payload: { id: string; pet: ParsedPet; spriteDataUrl: string }): void
   /** 在线市场列表（market/list 响应，含分页信息与类型集合）。 */
   setMarketPets(payload: { pets: MarketPet[]; total: number; page: number; pageSize: number; kinds: string[] }): void
+  /** 市场列表加载失败：必须复位加载态，否则「下一页/搜索」会永远无响应。 */
+  setMarketListError(message: string): void
   /** 某只市场宠物安装完成（market/installed 响应）。 */
   markMarketInstalled(info: { id: string; displayName: string; sourceDir: string }): void
   /** 某只市场宠物卸载完成（market/uninstalled 响应）。 */
@@ -708,6 +710,11 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     const pageSize = computeMarketPageSize()
     const totalPages = Math.max(1, Math.ceil(marketTotal / pageSize))
     const next = marketCurrentPage + 1
+    // 首次加载失败后（列表为空、total 为 0）：下一页按钮兼作「重试」。
+    if (marketPets.length === 0 && marketTotal === 0) {
+      requestMarket()
+      return
+    }
     // 防止越过最后一页（快速连点 / 按钮禁用状态滞后时仍会触发点击）。
     if (next > totalPages) return
     // 命中预取缓存：秒显，不再请求服务端；随后继续预取再下一页。
@@ -781,8 +788,23 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     schedulePrefetch()
   }
 
-  function markMarketInstalled(info: { id: string; displayName: string; sourceDir: string }): void {
-    const slug = basenameOf(info.sourceDir).toLowerCase()
+  function setMarketListError(message: string): void {
+    // 预取页失败：只丢弃预取状态，不打扰当前页（状态栏仍显示当前页信息）。
+    if (prefetchTarget !== null) {
+      prefetchTarget = null
+      prefetchScheduled = false
+      return
+    }
+    // 当前页失败：必须复位加载态，否则 marketLoading 卡 true，
+    // 后续「下一页/搜索/缩放」全被 if (marketLoading) return 拦截 → 界面假死。
+    marketLoading = false
+    marketStatus.textContent = '市场加载失败'
+    marketPageLabel.textContent = `第 ${marketCurrentPage} / ${Math.max(1, Math.ceil(marketTotal / Math.max(computeMarketPageSize(), 1)))} 页`
+    ;(marketNext as HTMLButtonElement).disabled = false // 允许再次点击（兼作重试入口）
+    setError(`市场加载失败: ${message}`)
+  }
+
+  function markMarketInstalled(info: { id: string; displayName: string; sourceDir: string }): void {    const slug = basenameOf(info.sourceDir).toLowerCase()
     installedSlugs.add(slug)
     installingSlugs.delete(slug)
     renderMarketList()
@@ -1230,6 +1252,7 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     setError,
     setPetPayload,
     setMarketPets,
+    setMarketListError,
     markMarketInstalled,
     markMarketUninstalled,
     setMarketThumb,
