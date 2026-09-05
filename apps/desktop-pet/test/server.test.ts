@@ -124,3 +124,21 @@ test('reconnect restores activity from the handshake snapshot', () => {
   assert.equal(server.currentDisplayState(), 'blocked')
   assert.equal(server.currentActivity()?.title, 'Restored')
 })
+
+test('completed (ready) sessions never drive the pet pose, only the tray', () => {
+  const { server, socket } = createHarness()
+  hello(socket)
+  socket.emit('message', JSON.stringify({ type: 'session/status', agent: 'dsh', sessionId: 's1', status: 'running' }))
+  socket.emit('message', JSON.stringify({ type: 'session/done', agent: 'dsh', sessionId: 's1' }))
+  // 完成态进托盘（绿点提醒），但不驱动宠物姿态 → 空闲
+  assert.equal(server.currentDisplayState(), 'idle')
+  assert.equal(server.currentActivity(), null)
+  assert.ok(
+    server.tray().some((t: any) => t.sessionId === 's1' && t.state === 'ready'),
+    'ready session should stay in the tray',
+  )
+  // 同时存在 running 会话时，姿态跟随 running
+  socket.emit('message', JSON.stringify({ type: 'session/status', agent: 'dsh', sessionId: 's2', status: 'running' }))
+  assert.equal(server.currentActivity()?.sessionId, 's2')
+  assert.equal(server.currentDisplayState(), 'running')
+})
