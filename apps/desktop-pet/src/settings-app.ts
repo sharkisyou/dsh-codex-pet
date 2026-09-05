@@ -763,6 +763,8 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     marketTotal = payload.total
     marketCurrentPage = payload.page
     marketLoading = false
+    // 市场恢复：清除之前「市场加载失败」的错误提示（否则错误行永久挂着）。
+    setError(null)
     // 填充类型筛选下拉（保留当前选中项）。
     const currentKind = marketKind.value
     marketKind.innerHTML = ''
