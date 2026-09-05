@@ -12,7 +12,7 @@ import test from 'node:test'
 
 import sharp from 'sharp'
 
-import { createMarket, type Market } from '../src/market'
+import { createMarket, DEFAULT_DOWNLOAD_CONCURRENCY, type Market } from '../src/market'
 import { createUiGateway } from '../src/ui-gateway'
 import type { WsLike } from '../src/server'
 
@@ -79,7 +79,7 @@ test('getThumbnail：下载遇到 503 自动重试后成功', async () => {
   assert.equal(calls, 3, '应恰好尝试 3 次（2 次 503 + 1 次成功）')
 })
 
-test('getThumbnail：并发下载数不超过并发上限（默认 6）', async () => {
+test('getThumbnail：并发下载数不超过并发上限（默认 12）', async () => {
   const sprite = await makeSprite(192, 208)
   let inFlight = 0
   let maxInFlight = 0
@@ -97,7 +97,7 @@ test('getThumbnail：并发下载数不超过并发上限（默认 6）', async 
       market.getThumbnail(marketPet(`https://petdex.test/sprite-${i}.webp`, `pet-${i}`))),
   )
   assert.ok(results.every((dataUrl) => dataUrl !== null))
-  assert.ok(maxInFlight <= 6, `最大并发 ${maxInFlight} 应 ≤ 6（页面 27 张并发下载会打爆 CDN）`)
+  assert.ok(maxInFlight <= DEFAULT_DOWNLOAD_CONCURRENCY, `最大并发 ${maxInFlight} 应 ≤ ${DEFAULT_DOWNLOAD_CONCURRENCY}`)
 })
 
 test('getThumbnail：精灵图小于 192x208 时兜底裁剪，不失败', async () => {

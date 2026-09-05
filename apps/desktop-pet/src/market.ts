@@ -39,8 +39,12 @@ export const DEFAULT_MAX_ZIP_BYTES = 50 * 1024 * 1024
  * 超时会直接导致「缩略图生成失败」。放宽到 60s 后同场景实测 0 失败。
  */
 export const DEFAULT_DOWNLOAD_TIMEOUT_MS = 60000
-/** 下载信号量上限：限制并发整图下载，避免页面首屏 27 张 2MB 并发打爆 CDN 连接。 */
-export const DEFAULT_DOWNLOAD_CONCURRENCY = 6
+/**
+ * 下载信号量上限：限制并发整图下载，避免页面首屏 27 张 2MB 并发打爆 CDN 连接。
+ * 实测（同时间窗 6/12/27 对比，27 张/页）：12 并发最快且失败率极低，
+ * 27 并发没有更快（网络/CDN 是瓶颈）还带来连接被断/限流的风险。
+ */
+export const DEFAULT_DOWNLOAD_CONCURRENCY = 12
 export const DEFAULT_ATLAS_ROWS = 9
 
 export interface MarketListFilter {
@@ -77,7 +81,7 @@ export interface MarketOptions {
   maxSpriteBytes?: number
   maxZipBytes?: number
   downloadTimeoutMs?: number
-  /** 并发下载上限（默认 6）。页面首屏一次并发请求 ~27 张缩略图，不限制会打爆 CDN。 */
+  /** 并发下载上限（默认 12）。页面首屏一次并发请求 ~27 张缩略图，不限制会打爆 CDN。 */
   downloadConcurrency?: number
 }
 
