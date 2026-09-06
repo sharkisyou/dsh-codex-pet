@@ -299,8 +299,6 @@ if (kind === 'pet') {
 
     function applyAwake(): void {
       if (stage) stage.style.visibility = awake ? 'visible' : 'hidden'
-      // 睡眠期间窗口可能被自动隐藏过：唤醒时补一次可见性同步。
-      syncPetWindowVisibility()
     }
 
     /* ---------- 状态应用 ---------- */
@@ -320,9 +318,6 @@ if (kind === 'pet') {
       const nextPet = settings.selectedPetId
       if (nextPet !== selectedPetId) {
         selectedPetId = nextPet
-        // 换宠/清空期间视为未就绪：旧精灵已清、新精灵未到。
-        petHasSprite = false
-        syncPetWindowVisibility()
         if (selectedPetId === null) {
           renderer.setPet(null)
           renderer.setSprite(null)
@@ -364,41 +359,6 @@ if (kind === 'pet') {
       applyTray(state.tray ?? state.activities ?? [])
     }
 
-    /* ---------- 未就绪时自动隐藏窗口 ----------
-       服务端不可达 / 未选宠物时不再显示绿粉占位框，宽限期后整体隐藏窗口
-       （托盘图标与设置窗的连接状态仍在）；连接恢复且精灵就绪后自动重新
-       显示并淡入。仅 Tauri 环境执行；只有本逻辑隐藏的窗口才会自动显示，
-       用户经托盘「唤醒/隐藏」的手动隐藏不被覆盖。 */
-    let petHasSprite = false
-    let wsConnected = false
-    let petHideTimer: ReturnType<typeof setTimeout> | null = null
-    let petAutoHidden = false
-    const PET_HIDE_GRACE_MS = 5000
-
-    function syncPetWindowVisibility(): void {
-      if (!isTauri()) return
-      const ready = wsConnected && petHasSprite
-      if (ready) {
-        if (petHideTimer !== null) {
-          clearTimeout(petHideTimer)
-          petHideTimer = null
-        }
-        if (petAutoHidden && awake) {
-          petAutoHidden = false
-          void currentTauriWindow()?.show().catch(() => {})
-        }
-        return
-      }
-      if (petHideTimer === null) {
-        petHideTimer = setTimeout(() => {
-          petHideTimer = null
-          if (wsConnected && petHasSprite) return
-          petAutoHidden = true
-          void currentTauriWindow()?.hide().catch(() => {})
-        }, PET_HIDE_GRACE_MS)
-      }
-    }
-
     const client: UiClient = createUiClient({
       handlers: {
         onState: applyState,
@@ -411,8 +371,6 @@ if (kind === 'pet') {
           if (id === selectedPetId) {
             renderer.setPet(pet as ParsedPet)
             renderer.setSprite(spriteDataUrl)
-            petHasSprite = Boolean(spriteDataUrl)
-            syncPetWindowVisibility()
           }
         },
         onError(message) {
@@ -420,15 +378,10 @@ if (kind === 'pet') {
           console.error('[desktop-pet] 连接错误：', message)
         },
         onStatus(connected) {
-          wsConnected = connected
           if (!connected) console.warn('[desktop-pet] 正在连接桌宠服务…')
-          syncPetWindowVisibility()
         },
       },
     })
-
-    // 启动即武装宽限计时器：服务端不在时窗口会在宽限期后隐藏而不是挂着占位框。
-    syncPetWindowVisibility()
 
     void attachPositionPersistence()
 
