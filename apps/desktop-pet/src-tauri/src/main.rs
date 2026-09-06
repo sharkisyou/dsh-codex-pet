@@ -153,16 +153,8 @@ if (-not $found) {
   Start-Process 'http://127.0.0.1:3080/'
 }
 "#;
-    let mut cmd = std::process::Command::new("powershell.exe");
-    cmd.args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", PS]);
-    {
-        // GUI 进程派生控制台子进程时 Windows 会新建控制台窗口，
-        // -WindowStyle Hidden 要等创建后才生效（肉眼可见闪一下）；
-        // CREATE_NO_WINDOW 从创建起就不分配控制台。
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
-    let output = cmd
+    let output = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", PS])
         .output()
         .map_err(|e| format!("focus_dsh_gui: 无法执行 powershell: {e}"))?;
     if !output.status.success() {
