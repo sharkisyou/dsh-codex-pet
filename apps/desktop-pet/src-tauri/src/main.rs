@@ -124,44 +124,100 @@ fn toggle_tray_window(app: tauri::AppHandle) -> Result<bool, String> {
 /// 托盘打开会话后把承载 DSH GUI 的浏览器窗口还原并置顶。
 ///
 /// 会话切换发生在网页内部（client sessions.open），但浏览器可能被最小化或
-/// 置于后台；这里扫描常见浏览器、把窗口标题含 “DeepSeek” 的窗口还原+置顶。
+/// 置于后台；这里扫描常见浏览器的顶层窗口、把标题含 “DeepSeek” 的还原+置前。
 /// 找不到时用默认浏览器打开 GUI 地址（持久 cookie 已认证，可直开）。
+///
+/// 纯 Win32 实现（枚举窗口 + ShellExecuteW 开 URL）：不派生子进程——
+/// GUI 进程派生控制台子进程（powershell）会让 Windows 新建控制台窗口，
+/// 每次点击都肉眼可见地闪一下终端；也不再有数百毫秒的运行时冷启动。
 #[tauri::command]
 fn focus_dsh_gui() -> Result<(), String> {
-    const PS: &str = r#"
-$ErrorActionPreference = 'SilentlyContinue'
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-public static class PetWin32 {
-  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-}
-"@
-$found = $false
-foreach ($name in @('chrome','msedge','firefox','brave','opera','vivaldi')) {
-  $procs = Get-Process -Name $name -ErrorAction SilentlyContinue |
-    Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -match 'DeepSeek' }
-  foreach ($p in $procs) {
-    [PetWin32]::ShowWindow($p.MainWindowHandle, 9) | Out-Null   # SW_RESTORE
-    [PetWin32]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
-    $found = $true
-  }
-  if ($found) { break }
-}
-if (-not $found) {
-  Start-Process 'http://127.0.0.1:3080/'
-}
-"#;
-    let output = std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", PS])
-        .output()
-        .map_err(|e| format!("focus_dsh_gui: 无法执行 powershell: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "focus_dsh_gui: powershell 失败: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+        SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOWNORMAL,
+    };
+
+    /// 只认常见浏览器的进程映像名（与旧 PowerShell 实现的名单一致），
+    /// 避免把标题碰巧含 “deepseek” 的资源管理器/编辑器窗口误判为 DSH GUI。
+    const BROWSERS: [&str; 6] = [
+        "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe",
+    ];
+    unsafe fn process_image_name(pid: u32) -> String {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return String::new();
+        }
+        let mut buf = [0u16; 1024];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, buf.as_mut_ptr(), &mut len);
+        CloseHandle(handle);
+        if ok == 0 {
+            return String::new();
+        }
+        String::from_utf16_lossy(&buf[..len as usize]).to_lowercase()
+    }
+    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: isize) -> i32 {
+        let matches = &mut *(lparam as *mut Vec<isize>);
+        if IsWindowVisible(hwnd) == 0 {
+            return 1;
+        }
+        let mut title = [0u16; 512];
+        let len = GetWindowTextW(hwnd, title.as_mut_ptr(), 512);
+        if len == 0 {
+            return 1;
+        }
+        if !String::from_utf16_lossy(&title[..len as usize]).to_lowercase().contains("deepseek") {
+            return 1;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid == 0 {
+            return 1;
+        }
+        let image = process_image_name(pid);
+        if BROWSERS.iter().any(|b| image.ends_with(b)) {
+            matches.push(hwnd as isize);
+        }
+        1
+    }
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    unsafe {
+        let mut matches: Vec<isize> = Vec::new();
+        EnumWindows(Some(enum_proc), &mut matches as *mut _ as isize);
+        if matches.is_empty() {
+            // 没有已认证的浏览器窗口：用默认浏览器打开 DSH GUI。
+            // ShellExecuteW 由 shell 处理，不经子进程，无控制台闪现。
+            let verb = wide("open");
+            let url = wide("http://127.0.0.1:3080/");
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                verb.as_ptr(),
+                url.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                SW_SHOWNORMAL as i32,
+            );
+            return Ok(());
+        }
+        for hwnd in matches {
+            let hwnd = hwnd as HWND;
+            // 仅最小化时还原：最大化中的浏览器保持最大化（旧实现无条件
+            // SW_RESTORE 会把最大化浏览器打回小窗）。
+            if IsIconic(hwnd) != 0 {
+                ShowWindow(hwnd, SW_RESTORE);
+            }
+            SetForegroundWindow(hwnd);
+        }
     }
     Ok(())
 }
