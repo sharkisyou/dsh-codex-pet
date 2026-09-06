@@ -75,6 +75,20 @@ pet server 与桥接插件的关键事件日志均落盘 `~/.dsh/logs/`（`pet-s
 - 全量编译约 2 分钟，增量约 7 秒；release 首次 2-3 分钟。
 - 数据源：桌宠通过 WSL2 localhost relay 连 WSL 里的 Vite（1420）与 pet server（3720），两者需保持运行，否则窗口空白。
 
+## Linux 桌面（基本形态）
+
+> 支持真 Linux 桌面（X11 + 合成器）；WSLg 受远程合成限制不作为目标环境。平台差异与前置库见 [AGENTS.md](AGENTS.md)。
+
+```sh
+cd apps/desktop-pet
+npm run build                    # 重建前端 dist（release 会嵌入二进制）
+cd src-tauri && cargo build --release
+cd .. && npm run server          # 另开终端：pet server（数据源）
+./src-tauri/target/release/desktop-pet
+```
+
+前置系统库（Ubuntu）：`libwebkit2gtk-4.1-dev`、`libgtk-3-dev`、`libayatana-appindicator3-dev`。
+
 ## DSH 安装（桥接插件）
 
 ```sh

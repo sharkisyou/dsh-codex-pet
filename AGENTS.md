@@ -76,3 +76,19 @@ Windows 侧一次性环境已装好（Node、Rust MSVC、VS2022、WebView2），
   - 坑：同 identifier 实例互斥——WebView2 用户数据目录按 identifier 共享（`%LOCALAPPDATA%\dev.yshark.desktop-pet`），
     旧实例未退出时新实例会"秒退"，先关旧实例再启动。
 - **release 打包**：正式安装包用 `tauri build`（去掉 `--debug`），或配置 GitHub Actions `windows-latest` runner 自动构建。
+
+## Linux 桌面基本形态（2026-09-07 起支持）
+
+> 目标环境是**真 Linux 桌面**（X11 + 合成器，如 VMware Ubuntu / GNOME）。WSLg 受 RAIL 远程合成限制
+> （透明/置顶/点击穿透不可靠、系统托盘无宿主），不作为目标环境。
+
+- **前置系统库（Ubuntu）**：`sudo apt install libwebkit2gtk-4.1-dev build-essential libgtk-3-dev
+  libayatana-appindicator3-dev`（本机 WSL 侧已装好）。
+- **构建**：`apps/desktop-pet` 下 `npm run build`（重建前端 dist）→ `src-tauri` 下 `cargo build --release`
+  （release 把 dist 嵌进二进制，运行时不需要 Vite）。
+- **运行**：先起数据面 `npm run server`（pet server 3720），再跑 `src-tauri/target/release/desktop-pet`。
+- **平台差异（cfg 门控）**：`focus_dsh_gui` 非 Windows 退化为 `xdg-open` 打开 GUI（不能聚焦既有浏览器窗口）；
+  日志落 `$HOME/dsh-pet.log`（Windows 仍是 `%USERPROFILE%`）；系统托盘走 libayatana-appindicator
+  （GNOME 需 AppIndicator 扩展，Ubuntu 默认带）。
+- **双平台检查**：改 Rust 代码后在 WSL 里 `cargo check`（Linux）+ `cargo check --target
+  x86_64-pc-windows-gnu`（MinGW 交叉）各跑一遍，Win32 代码不再能裸混进主干。

@@ -132,6 +132,7 @@ fn toggle_tray_window(app: tauri::AppHandle) -> Result<bool, String> {
 /// 纯 Win32 实现（枚举窗口 + ShellExecuteW 开 URL）：不派生子进程——
 /// GUI 进程派生控制台子进程（powershell）会让 Windows 新建控制台窗口，
 /// 每次点击都肉眼可见地闪一下终端；也不再有数百毫秒的运行时冷启动。
+#[cfg(windows)]
 #[tauri::command]
 fn focus_dsh_gui(title: Option<String>) -> Result<(), String> {
     use windows_sys::Win32::Foundation::CloseHandle;
@@ -247,12 +248,32 @@ fn focus_dsh_gui(title: Option<String>) -> Result<(), String> {
     Ok(())
 }
 
-/// 前端日志组件：把一行日志追加到 `%USERPROFILE%\dsh-pet.log`，便于事后排查
-/// Windows 桌宠 UI/动画问题（无 devtools 时）。调用方已 console.log。
+/// 非 Windows 平台的降级实现：无法枚举/聚焦窗口，退化为 Windows 实现的
+/// 分支③——用默认浏览器打开 DSH GUI（持久 cookie 已认证，可直开）。
+/// xdg-open 由桌面会话提供，spawn 失败（无桌面环境）时静默忽略。
+#[cfg(not(windows))]
+#[tauri::command]
+fn focus_dsh_gui(_title: Option<String>) -> Result<(), String> {
+    let _ = std::process::Command::new("xdg-open")
+        .arg("http://127.0.0.1:3080/")
+        .spawn();
+    Ok(())
+}
+
+/// 日志目录：Windows 用 %USERPROFILE%，其余平台用 $HOME，都取不到时落当前目录。
+fn log_dir() -> std::path::PathBuf {
+    std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+/// 前端日志组件：把一行日志追加到 `dsh-pet.log`（Windows: `%USERPROFILE%`，
+/// 其余平台: `$HOME`），便于事后排查桌宠 UI/动画问题（无 devtools 时）。
+/// 调用方已 console.log。
 #[tauri::command]
 fn pet_log_append(line: String) -> Result<(), String> {
-    let profile = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".into());
-    let path = std::path::Path::new(&profile).join("dsh-pet.log");
+    let path = log_dir().join("dsh-pet.log");
     use std::io::Write;
     let mut file = std::fs::OpenOptions::new()
         .create(true)
