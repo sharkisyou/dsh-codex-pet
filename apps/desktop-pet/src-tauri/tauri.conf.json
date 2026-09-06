@@ -35,6 +35,7 @@
         "height": 640,
         "visible": false,
         "resizable": true,
+        "maximized": true,
         "backgroundColor": "#f7f9fd"
       },
       {
