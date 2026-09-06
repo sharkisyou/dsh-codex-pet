@@ -83,6 +83,21 @@ if (kind === 'pet') {
     let positionRestored = false
     let positionSaveTimer: ReturnType<typeof setTimeout> | null = null
     let lastActivityState = 'idle'
+    /** 待机形态状态：精灵未加载时显示剪影；断连时角标亮起（已加载宠物的断连保留宠物）。 */
+    const standbyEl = document.querySelector<HTMLElement>('#pet-standby')
+    let petHasSprite = false
+    let wsConnected = false
+
+    function syncPetStandby(): void {
+      if (!standbyEl) return
+      const show = !petHasSprite
+      standbyEl.classList.toggle('show', show)
+      const badge = standbyEl.querySelector<HTMLElement>('.pet-standby-badge')
+      if (badge) {
+        badge.hidden = wsConnected
+        badge.textContent = t('pet.offline')
+      }
+    }
 
     /* ---------- 桌宠外壳交互（气泡 / 悬停 / 缩放 / 移动动画 / 右键菜单） ---------- */
 
@@ -312,12 +327,17 @@ if (kind === 'pet') {
       if (menuSettings) menuSettings.textContent = t('menu.settings')
       if (menuHide) menuHide.textContent = t('menu.hide')
       if (trayToggle) trayToggle.title = trayExpanded ? t('tray.collapse') : t('tray.expand')
+      const standbyBadge = standbyEl?.querySelector<HTMLElement>('.pet-standby-badge')
+      if (standbyBadge) standbyBadge.textContent = t('pet.offline')
     }
 
     function applySettings(settings: AppStateSnapshot['settings']): void {
       const nextPet = settings.selectedPetId
       if (nextPet !== selectedPetId) {
         selectedPetId = nextPet
+        // 换宠/清空期间视为未就绪：旧精灵已清、新精灵未到。
+        petHasSprite = false
+        syncPetStandby()
         if (selectedPetId === null) {
           renderer.setPet(null)
           renderer.setSprite(null)
@@ -371,6 +391,8 @@ if (kind === 'pet') {
           if (id === selectedPetId) {
             renderer.setPet(pet as ParsedPet)
             renderer.setSprite(spriteDataUrl)
+            petHasSprite = Boolean(spriteDataUrl)
+            syncPetStandby()
           }
         },
         onError(message) {
@@ -378,10 +400,15 @@ if (kind === 'pet') {
           console.error('[desktop-pet] 连接错误：', message)
         },
         onStatus(connected) {
+          wsConnected = connected
           if (!connected) console.warn('[desktop-pet] 正在连接桌宠服务…')
+          syncPetStandby()
         },
       },
     })
+
+    // 启动即同步一次：服务端不在时页面加载即为待机形态（剪影 + 未连接角标）。
+    syncPetStandby()
 
     void attachPositionPersistence()
 

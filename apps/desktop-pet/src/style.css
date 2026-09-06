@@ -121,6 +121,71 @@ input {
   filter: none;
 }
 
+/* 宠物窗：未加载不显示占位框（改用 .pet-standby 待机形态），
+   精灵就绪后随 opacity 淡入，切换宠物时淡出淡入。 */
+body.pet-window .pet {
+  transition: opacity 0.45s ease;
+}
+body.pet-window .pet:not(.is-loaded) {
+  opacity: 0;
+  visibility: hidden;
+  /* 淡出可见：visibility 推迟到 opacity 过渡结束再隐藏 */
+  transition: opacity 0.45s ease, visibility 0s linear 0.45s;
+}
+
+/* 待机形态：宠物剪影 + 未连接角标（观感复用活动角标气泡）。
+   仅在精灵未加载时显示；已加载过宠物的断连保留当前宠物不切剪影。 */
+.pet-standby {
+  position: absolute;
+  bottom: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.45s ease, visibility 0s linear 0.45s;
+}
+.pet-standby.show {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.45s ease;
+}
+.pet-standby-silhouette {
+  width: 132px;
+  height: 143px;
+  background: center / contain no-repeat url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 70'><g fill='%2394a3b8'><path d='M15 22 L21 7 L27 17 Z'/><path d='M49 22 L43 7 L37 17 Z'/><circle cx='32' cy='22' r='12'/><path d='M19 64 C17 44 23 33 32 33 C41 33 47 44 45 64 Z'/><path d='M45 62 C54 62 57 52 52 47 C59 53 58 66 45 66 Z'/></g></svg>");
+  animation: pet-standby-breathe 3.2s ease-in-out infinite;
+}
+@keyframes pet-standby-breathe {
+  0%,
+  100% {
+    opacity: 0.42;
+  }
+  50% {
+    opacity: 0.62;
+  }
+}
+.pet-standby-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 0.5);
+  background: rgb(15 23 42 / 0.55);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  backdrop-filter: blur(8px);
+}
+/* 已连接但未选宠物时隐藏角标（display 需显式覆盖才能让 [hidden] 生效） */
+.pet-standby-badge[hidden] {
+  display: none;
+}
+
 /* 右键菜单 */
 .pet-context-menu {
   position: fixed;

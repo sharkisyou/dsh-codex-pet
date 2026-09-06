@@ -130,6 +130,7 @@ const ZH: Dict = {
   'tray.connectError': '连接错误：{message}',
   'tray.connecting': '正在连接桌宠服务…',
 
+  'pet.offline': '未连接',
   'menu.settings': '设置',
   'menu.hide': '隐藏',
 }
@@ -251,6 +252,7 @@ const EN: Dict = {
   'tray.connectError': 'Connection error: {message}',
   'tray.connecting': 'Connecting to pet service…',
 
+  'pet.offline': 'Offline',
   'menu.settings': 'Settings',
   'menu.hide': 'Hide',
 }
