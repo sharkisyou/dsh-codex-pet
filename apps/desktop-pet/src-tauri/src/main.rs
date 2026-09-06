@@ -250,6 +250,29 @@ fn main() {
                 });
             }
 
+            // 设置窗预展开到整个工作区（仍隐藏）。不能用 maximized 创建：
+            // tao 创建期会先 SW_MAXIMIZE（窗口短暂可见）再 set_visible(false)，
+            // 中间 webview 创建的消息泵会让这一帧上屏——启动瞬间全屏闪现
+            // （用户录屏 GIF f-034 帧证实）。set_size/set_position 走
+            // SetWindowPos，不显示窗口；webview 在隐藏期间完成全尺寸布局，
+            // 打开设置即满屏满内容。窗口状态为「还原」而非「最大化」。
+            if let Some(settings_window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
+                let monitor = settings_window
+                    .current_monitor()
+                    .ok()
+                    .flatten()
+                    .or_else(|| settings_window.primary_monitor().ok().flatten());
+                if let Some(m) = monitor {
+                    let wa = m.work_area();
+                    let _ = settings_window.set_position(tauri::PhysicalPosition::new(
+                        wa.position.x, wa.position.y,
+                    ));
+                    let _ = settings_window.set_size(tauri::PhysicalSize::new(
+                        wa.size.width, wa.size.height,
+                    ));
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
