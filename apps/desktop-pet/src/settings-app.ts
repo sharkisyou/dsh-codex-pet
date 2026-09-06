@@ -1061,12 +1061,13 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   }
 
   /**
-   * 最大化/调整窗口大小时，WebView 默认白底会在尚未重绘的新区域闪现。
-   * 把原生窗口背景同步为当前主题的窗口底色（--bg-window），闪现色随主题走。
-   * 仅 Tauri 环境执行；能力不可用或非 Tauri（浏览器预览）时静默跳过。
+   * 最大化/调整窗口大小时的白屏根治：html 根背景必须不透明。
+   * 本页样式与宠物窗共用（html/body 透明供宠物窗透出桌面），透明渲染帧在
+   * WebView2 resize 时，未提交的暴露区呈纯白且无视 DefaultBackgroundColor
+   * （品红判别实验实测）；帧不透明时暴露区直接显示 html 底色（≤1 帧生效）。
+   * html 在 body 外层拿不到 body[data-theme] 的 token，用解析好的 hex 写入。
    */
   function syncNativeBackground(): void {
-    if (!('__TAURI_INTERNALS__' in window)) return
     const probe = document.createElement('div')
     probe.style.backgroundColor = 'var(--bg-window)'
     document.body.appendChild(probe)
@@ -1075,6 +1076,8 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     const parts = rgb.match(/\d+/g)
     if (!parts || parts.length < 3) return
     const hex = `#${parts.slice(0, 3).map((c) => Number(c).toString(16).padStart(2, '0')).join('')}`
+    document.documentElement.style.backgroundColor = hex
+    if (!('__TAURI_INTERNALS__' in window)) return
     void getCurrentWebviewWindow().setBackgroundColor(hex).catch((error) => {
       // 权限缺失（capabilities 未放行 set-background-color）时这里能看见告警。
       console.warn('[desktop-pet] 设置窗口原生背景色失败:', error)
