@@ -54,10 +54,10 @@ async function toggleTrayWindow(): Promise<boolean> {
 
 /** 托盘打开会话后，把承载 DSH GUI 的浏览器窗口还原并置顶（会话切换在网页内，
  *  但浏览器可能被最小化/置于后台）。非 Tauri 环境静默。 */
-async function focusDshGuiWindow(): Promise<void> {
+async function focusDshGuiWindow(title?: string): Promise<void> {
   if (!isTauri()) return
   try {
-    await invoke('focus_dsh_gui')
+    await invoke('focus_dsh_gui', { title: title ?? null })
   } catch {
     // 聚焦失败不影响会话打开
   }
@@ -216,11 +216,11 @@ if (kind === 'pet') {
         trayBox.hidden = true
         return
       }
-      trayBox.hidden = false
-      renderTrayItems(trayBox, trayItems, (agent, sessionId) => {
-        client.openTrayItem(agent, sessionId, 'tray')
-        void focusDshGuiWindow()
-      })
+    trayBox.hidden = false
+    renderTrayItems(trayBox, trayItems, (agent, sessionId, _reason, title) => {
+      client.openTrayItem(agent, sessionId, 'tray')
+      void focusDshGuiWindow(title)
+    })
     }
 
     function applyTray(activities: TrayItemSnapshot[]): void {
@@ -626,10 +626,10 @@ function mountTrayWindow(): void {
       fitHeight()
       return
     }
-    renderTrayItems(list, listItems, (agent, sessionId) => {
+    renderTrayItems(list, listItems, (agent, sessionId, _reason, title) => {
       // 标记已读 + 打开 DSH 会话；托盘窗口保持打开
       client.openTrayItem(agent, sessionId, 'tray')
-      void focusDshGuiWindow()
+      void focusDshGuiWindow(title)
     })
     fitHeight()
   }

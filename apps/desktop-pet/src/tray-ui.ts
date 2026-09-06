@@ -30,7 +30,7 @@ export function trayStateClass(state: string): string {
 }
 
 export interface TrayItemClickHandler {
-  (agent: string, sessionId: string, reason?: string): void
+  (agent: string, sessionId: string, reason?: string, title?: string): void
 }
 
 /** 渲染托盘列表项到容器。每次调用会清空并重建。 */
@@ -62,7 +62,7 @@ export function renderTrayItems(
     row.append(title, meta)
     row.addEventListener('click', () => {
       if (item.agent === null) return
-      onOpen(item.agent, item.sessionId, 'tray')
+      onOpen(item.agent, item.sessionId, 'tray', item.title || item.sessionId)
     })
     container.appendChild(row)
   }

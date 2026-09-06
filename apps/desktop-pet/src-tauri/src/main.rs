@@ -124,14 +124,16 @@ fn toggle_tray_window(app: tauri::AppHandle) -> Result<bool, String> {
 /// 托盘打开会话后把承载 DSH GUI 的浏览器窗口还原并置顶。
 ///
 /// 会话切换发生在网页内部（client sessions.open），但浏览器可能被最小化或
-/// 置于后台；这里扫描常见浏览器的顶层窗口、把标题含 “DeepSeek” 的还原+置前。
-/// 找不到时用默认浏览器打开 GUI 地址（持久 cookie 已认证，可直开）。
+/// 置于后台；这里扫描常见浏览器的顶层窗口做层叠匹配：
+/// ① 标题同时含 “deepseek” 与会话标题 → 精确聚焦该窗口；
+/// ② 没有则退回所有标题含 “deepseek” 的窗口；
+/// ③ 仍没有 → 用默认浏览器打开 GUI 地址（持久 cookie 已认证，可直开）。
 ///
 /// 纯 Win32 实现（枚举窗口 + ShellExecuteW 开 URL）：不派生子进程——
 /// GUI 进程派生控制台子进程（powershell）会让 Windows 新建控制台窗口，
 /// 每次点击都肉眼可见地闪一下终端；也不再有数百毫秒的运行时冷启动。
 #[tauri::command]
-fn focus_dsh_gui() -> Result<(), String> {
+fn focus_dsh_gui(title: Option<String>) -> Result<(), String> {
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::System::Threading::{
@@ -164,7 +166,7 @@ fn focus_dsh_gui() -> Result<(), String> {
         String::from_utf16_lossy(&buf[..len as usize]).to_lowercase()
     }
     unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: isize) -> i32 {
-        let matches = &mut *(lparam as *mut Vec<isize>);
+        let matches = &mut *(lparam as *mut Vec<(isize, String)>);
         if IsWindowVisible(hwnd) == 0 {
             return 1;
         }
@@ -173,7 +175,8 @@ fn focus_dsh_gui() -> Result<(), String> {
         if len == 0 {
             return 1;
         }
-        if !String::from_utf16_lossy(&title[..len as usize]).to_lowercase().contains("deepseek") {
+        let title_lower = String::from_utf16_lossy(&title[..len as usize]).to_lowercase();
+        if !title_lower.contains("deepseek") {
             return 1;
         }
         let mut pid = 0u32;
@@ -183,7 +186,7 @@ fn focus_dsh_gui() -> Result<(), String> {
         }
         let image = process_image_name(pid);
         if BROWSERS.iter().any(|b| image.ends_with(b)) {
-            matches.push(hwnd as isize);
+            matches.push((hwnd as isize, title_lower));
         }
         1
     }
@@ -192,9 +195,31 @@ fn focus_dsh_gui() -> Result<(), String> {
     }
 
     unsafe {
-        let mut matches: Vec<isize> = Vec::new();
+        let mut matches: Vec<(isize, String)> = Vec::new();
         EnumWindows(Some(enum_proc), &mut matches as *mut _ as isize);
-        if matches.is_empty() {
+        // 层叠匹配：优先「DeepSeek + 会话标题」都在标题里的窗口；没有则退回
+        // 所有 DeepSeek 窗口（网页切会话不保证同步改标签标题）。
+        let needle = title
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_lowercase);
+        let targets: Vec<isize> = match &needle {
+            Some(needle) => {
+                let exact: Vec<isize> = matches
+                    .iter()
+                    .filter(|(_, t)| t.contains(needle))
+                    .map(|(h, _)| *h)
+                    .collect();
+                if exact.is_empty() {
+                    matches.iter().map(|(h, _)| *h).collect()
+                } else {
+                    exact
+                }
+            }
+            None => matches.iter().map(|(h, _)| *h).collect(),
+        };
+        if targets.is_empty() {
             // 没有已认证的浏览器窗口：用默认浏览器打开 DSH GUI。
             // ShellExecuteW 由 shell 处理，不经子进程，无控制台闪现。
             let verb = wide("open");
@@ -209,7 +234,7 @@ fn focus_dsh_gui() -> Result<(), String> {
             );
             return Ok(());
         }
-        for hwnd in matches {
+        for hwnd in targets {
             let hwnd = hwnd as HWND;
             // 仅最小化时还原：最大化中的浏览器保持最大化（旧实现无条件
             // SW_RESTORE 会把最大化浏览器打回小窗）。
