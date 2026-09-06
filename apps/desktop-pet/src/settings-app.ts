@@ -12,6 +12,7 @@
 
 import { PROTOCOL_VERSION } from '@yshark/pet-protocol'
 import type { ParsedPet } from '@yshark/pet-core'
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 
 import {
   APP_VERSION,
@@ -1056,6 +1057,25 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     }
     darkThemeSelect.value = settings?.darkTheme ?? 'graphite'
     lightThemeSelect.value = settings?.lightTheme ?? 'classic'
+    syncNativeBackground()
+  }
+
+  /**
+   * 最大化/调整窗口大小时，WebView 默认白底会在尚未重绘的新区域闪现。
+   * 把原生窗口背景同步为当前主题的窗口底色（--bg-window），闪现色随主题走。
+   * 仅 Tauri 环境执行；能力不可用或非 Tauri（浏览器预览）时静默跳过。
+   */
+  function syncNativeBackground(): void {
+    if (!('__TAURI_INTERNALS__' in window)) return
+    const probe = document.createElement('div')
+    probe.style.backgroundColor = 'var(--bg-window)'
+    document.body.appendChild(probe)
+    const rgb = getComputedStyle(probe).backgroundColor
+    probe.remove()
+    const parts = rgb.match(/\d+/g)
+    if (!parts || parts.length < 3) return
+    const hex = `#${parts.slice(0, 3).map((c) => Number(c).toString(16).padStart(2, '0')).join('')}`
+    void getCurrentWebviewWindow().setBackgroundColor(hex).catch(() => { /* 能力不可用时忽略 */ })
   }
 
   systemDarkQuery.addEventListener('change', () => applyTheme())
