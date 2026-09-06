@@ -24,6 +24,27 @@ _Avoid_: 封面, 预览图
 市场按"网格实际列数 × 3 行"计算每页数量（如 9 列 → 27 个/页），保证整页铺满；窗口缩放列数变化时自动重排当前页。
 _Avoid_: 固定每页条数
 
+**主题模式 (Theme Mode)**:
+设置窗外观的三选一：`system / dark / light`。决定使用深色侧还是浅色侧主题；`system` 跟随 OS `prefers-color-scheme`（matchMedia 监听，实时切换，无需刷新）。
+_Avoid_: 亮暗自动切换（与"跟随系统"语义混淆）, 夜间模式
+
+**主题 (Theme)**:
+7 套语义 CSS 变量 token 集：浅色侧 `classic / warm-paper / clear-sky`，深色侧 `graphite / warm-night / midnight / neon`。以 `body.settings-window[data-theme=…]` 切换，**只作用于设置窗口**；主题可覆盖圆角/字体/阴影（霓虹终端的直角 + 等宽 + 辉光），不只是换色。
+_Avoid_: 皮肤, 散落的硬编码色值
+
+**界面语言 (UI Language)**:
+`system / zh / en` 三选一；`system` 按 `navigator.language` 解析（窗口加载与设置同步时）。词典在 `i18n.ts`（zh/en 各约 100 条），静态文案挂 `data-i18n` 由 `applyLanguage` 重写，动态文案由渲染函数重算；覆盖设置窗、宠物窗右键菜单与托盘窗。
+_Avoid_: 运行时翻译框架, 机器翻译
+
+## 外观与语言（方案要点）
+
+- **模型**：模式（系统/深色/浅色）+ 深色侧主题 + 浅色侧主题三件套各自持久化（`themeMode / darkTheme / lightTheme`），语言为 `language` 字段；非法值 sanitize 回退默认（system / graphite / classic / system），旧 settings.json 向后兼容。
+- **主题机制**：设置窗全部颜色收敛为约 40 个语义 token（`style.css`，`body.settings-window` 作用域），7 套主题 = 7 组 `data-theme` 覆盖；设置窗自行解析并写 `data-theme`，系统模式经 `matchMedia` 实时跟随 OS 深浅色。
+- **语言机制**：`i18n.ts` 词典 + `t(key, params)`；静态文案 `data-i18n` 标记统一重写、动态文案由渲染函数重算，切换即时生效；`navigator.language` 无变更事件，系统语言改动在窗口重开/设置同步后生效（平台差异，与主题的系统跟随不同）。
+- **UI**：设置窗「外观」组 = 主题卡片（模式分段 + 双侧主题下拉）+ 语言卡片（系统默认/中文/English 分段）；无说明文案与"当前生效"读数。
+- **词汇表**：语言选项显示名（中文/English）与主题显示名（如 Neon Terminal）都在 `i18n.ts` 词典内，不在常量里。
+- **决策记录**：见 [`../../docs/adr/0005-settings-theme-and-language.md`](../../docs/adr/0005-settings-theme-and-language.md)（扩展 ADR 0003「设置持久化」字段列表）；方向经一次性原型 `prototype/settings-dark-theme.html`（gitignore 内）验证。
+
 ## 在线宠物市场（方案要点）
 
 - **架构**：一切网络/文件操作走 Node 服务端（`market.ts`），浏览器只通过内部 WS 消费数据——因为安装要写 `~/.codex/pets`、manifest 1.6MB/4669 条太重、且浏览器访问不了 petdex CDN。

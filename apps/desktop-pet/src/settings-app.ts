@@ -14,11 +14,20 @@ import { PROTOCOL_VERSION } from '@yshark/pet-protocol'
 import type { ParsedPet } from '@yshark/pet-core'
 
 import {
-  APP_NAME,
   APP_VERSION,
-  ZOOM_MAX,
+  DARK_THEME_IDS,
+  LANGUAGE_IDS,
+  LIGHT_THEME_IDS,
+  THEME_MODES,
   ZOOM_MIN,
+  ZOOM_MAX,
+  type DarkThemeId,
+  type LanguageId,
+  type LightThemeId,
+  type ThemeId,
+  type ThemeMode,
 } from './app-constants.js'
+import { currentLanguage, resolveLanguage, setLanguage, t } from './i18n.js'
 import { createDomPetRenderer } from './dom-pet-renderer.js'
 import type { AppStateSnapshot } from './controller.js'
 import type { UiClient } from './ui-client.js'
@@ -56,6 +65,13 @@ function h(tag: string, className?: string, text?: string): HTMLElement {
   return el
 }
 
+/** 静态文案节点：绑定 i18n key，语言切换时由 applyLanguage 统一重写。 */
+function i18n<T extends HTMLElement>(el: T, key: string): T {
+  el.dataset.i18n = key
+  el.textContent = t(key)
+  return el
+}
+
 function p(text: string, className?: string): HTMLParagraphElement {
   const el = document.createElement('p')
   if (className) el.className = className
@@ -63,15 +79,23 @@ function p(text: string, className?: string): HTMLParagraphElement {
   return el
 }
 
-function card(title: string): HTMLElement {
+/** 静态文案段落（i18n key）。 */
+function pt(key: string, className?: string): HTMLParagraphElement {
+  return i18n(p(''), key)
+}
+
+/** 卡片工厂：titleKey 为 i18n key。 */
+function card(titleKey: string): HTMLElement {
   const section = h('section', 'settings-card')
-  section.appendChild(h('div', 'settings-section-title', title))
+  section.appendChild(i18n(h('div', 'settings-section-title'), titleKey))
   return section
 }
 
 export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsApp {
   root.innerHTML = ''
   root.className = 'settings-root'
+  // 挂载时先按系统语言取词；持久化的语言选择随 settings 到达后再应用。
+  setLanguage(resolveLanguage(null))
 
   /* ---------- 侧边栏 ---------- */
 
@@ -80,7 +104,7 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   const brand = h('div', 'settings-brand')
   const brandMark = h('span', 'brand-mark', '宠')
   const petMeta = h('div', 'pet-meta')
-  petMeta.appendChild(h('strong', '', APP_NAME))
+  petMeta.appendChild(i18n(h('strong'), 'app.name'))
   const metaVersion = h('span', '', `Desktop Pet v${APP_VERSION}`)
   petMeta.appendChild(metaVersion)
   brand.append(brandMark, petMeta)
@@ -106,13 +130,13 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   settingsTab.dataset.page = 'settings'
   const settingsIconEl = h('span', 'nav-icon')
   settingsIconEl.innerHTML = settingsIcon
-  settingsTab.append(settingsIconEl, h('span', '', '设置'))
+  settingsTab.append(settingsIconEl, i18n(h('span'), 'nav.settings'))
   const petsTab = h('button', 'tab-button', '')
   petsTab.setAttribute('type', 'button')
   petsTab.dataset.page = 'pets'
   const petsIconEl = h('span', 'nav-icon')
   petsIconEl.innerHTML = petsIcon
-  petsTab.append(petsIconEl, h('span', '', '宠物'))
+  petsTab.append(petsIconEl, i18n(h('span'), 'nav.pets'))
   const marketIcon = (
     '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" ' +
     'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
@@ -125,11 +149,11 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   marketTab.dataset.page = 'market'
   const marketIconEl = h('span', 'nav-icon')
   marketIconEl.innerHTML = marketIcon
-  marketTab.append(marketIconEl, h('span', '', '市场'))
+  marketTab.append(marketIconEl, i18n(h('span'), 'nav.market'))
   nav.append(settingsTab, petsTab, marketTab)
 
   const sidebarFooter = h('div', 'settings-sidebar-footer')
-  const statusPill = h('span', 'status-pill', '连接中…')
+  const statusPill = h('span', 'status-pill', t('status.connecting'))
   sidebarFooter.appendChild(statusPill)
 
   sidebar.append(brand, nav, sidebarFooter)
@@ -140,9 +164,9 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
 
   const header = h('header', 'settings-header')
   const headerText = h('div', '')
-  const titleEl = h('h1', '', '设置')
-  const subtitleEl = p('管理桌宠、缩放、唤醒与宠物库。', '')
-  const statusLine = p('连接中…', 'settings-status')
+  const titleEl = h('h1', '', t('page.pets.title'))
+  const subtitleEl = p(t('page.pets.subtitle'), '')
+  const statusLine = p(t('status.connecting'), 'settings-status')
   const errorLine = p('', 'settings-error')
   errorLine.hidden = true
   headerText.append(titleEl, subtitleEl)
@@ -153,7 +177,7 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   settingsPage.dataset.page = 'settings'
 
   // 当前宠物概览卡片（方案 A：选宠物统一去「宠物」页）
-  const petSection = card('当前宠物')
+  const petSection = card('card.pet')
   petSection.classList.add('settings-card--wide')
   const petGrid = h('div', 'pet-settings-grid')
   const preview = h('div', 'settings-pet-preview')
@@ -161,14 +185,14 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   const previewPet = h('div', 'pet-preview-pet')
   previewBox.appendChild(previewPet)
   preview.appendChild(previewBox)
-  const previewName = h('strong', '', '未选择')
+  const previewName = h('strong', '', t('pet.unselected'))
   preview.appendChild(previewName)
   // 左右结构：左侧预览，右侧说明 + 按钮（消灭全宽卡右侧大片空白）
   const petOverview = h('div', 'pet-overview')
   const petOverviewText = h('div', 'pet-overview-text')
-  petOverviewText.appendChild(p('当前桌宠会跟随任务状态在桌面活动。', 'setting-hint'))
-  petOverviewText.appendChild(p('选择或浏览宠物库，请到「宠物」页面。', 'setting-hint'))
-  const petChooseButton = h('button', 'file-button primary-action', '去宠物页选择')
+  petOverviewText.appendChild(pt('pet.hint1', 'setting-hint'))
+  petOverviewText.appendChild(pt('pet.hint2', 'setting-hint'))
+  const petChooseButton = i18n(h('button', 'file-button primary-action'), 'pet.choose')
   petChooseButton.setAttribute('type', 'button')
   petChooseButton.addEventListener('click', () => setPage('pets'))
   petOverview.append(petOverviewText, petChooseButton)
@@ -188,7 +212,7 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   })
 
   // 缩放卡片
-  const zoomSection = card('缩放')
+  const zoomSection = card('card.zoom')
   const zoomRow = h('div', 'zoom-row')
   const zoomSlider = document.createElement('input')
   zoomSlider.type = 'range'
@@ -204,22 +228,91 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     h('span', '', '100%'),
     h('span', '', `${Math.round(ZOOM_MAX * 100)}%`),
   )
-  const zoomHint = p('按住 Ctrl 并在桌宠窗口滚动鼠标滚轮，也可以调整大小。', 'setting-hint')
+  const zoomHint = pt('zoom.hint', 'setting-hint')
   zoomSection.append(zoomRow, zoomScale, zoomHint)
 
   // 唤醒卡片
-  const wakeSection = card('唤醒')
+  const wakeSection = card('card.wake')
   const wakeLabel = h('label', 'wake-label')
   const wakeCheckbox = document.createElement('input')
   wakeCheckbox.type = 'checkbox'
   wakeCheckbox.className = 'wake-checkbox'
-  const wakeText = h('span', '', '跟随会话自动显示 / 隐藏')
-  wakeLabel.append(wakeCheckbox, wakeText)
-  const wakeHint = p('关闭时宠物保持隐藏，不随任务状态出现。', 'setting-hint')
+  wakeLabel.append(wakeCheckbox, i18n(h('span'), 'wake.label'))
+  const wakeHint = pt('wake.hint', 'setting-hint')
   wakeSection.append(wakeLabel, wakeHint)
 
+  // 主题卡片（外观组）：模式三选一 + 深色侧/浅色侧主题下拉
+  const themeSection = card('card.theme')
+  themeSection.classList.add('settings-card--wide')
+  const themePicker = h('div', 'theme-picker')
+
+  const themeModeBlock = h('div', 'theme-block')
+  themeModeBlock.appendChild(i18n(h('span', 'theme-label'), 'theme.mode'))
+  const themeModeGroup = h('div', 'theme-mode')
+  const themeModeButtons = new Map<ThemeMode, HTMLElement>()
+  for (const mode of THEME_MODES) {
+    const button = i18n(h('button', 'theme-mode-btn'), `theme.mode.${mode}`)
+    button.setAttribute('type', 'button')
+    button.addEventListener('click', () => {
+      if (currentSettings?.themeMode === mode) return
+      client.updateSettings({ themeMode: mode })
+    })
+    themeModeButtons.set(mode, button)
+    themeModeGroup.appendChild(button)
+  }
+  themeModeBlock.appendChild(themeModeGroup)
+
+  const darkThemeBlock = h('div', 'theme-block')
+  darkThemeBlock.appendChild(i18n(h('span', 'theme-label'), 'theme.dark'))
+  const darkThemeSelect = document.createElement('select')
+  darkThemeSelect.className = 'theme-select'
+  for (const id of DARK_THEME_IDS) {
+    const option = i18n(document.createElement('option') as HTMLOptionElement, `theme.dark.${id}`)
+    option.value = id
+    darkThemeSelect.appendChild(option)
+  }
+  darkThemeSelect.addEventListener('change', () => {
+    client.updateSettings({ darkTheme: darkThemeSelect.value as DarkThemeId })
+  })
+  darkThemeBlock.appendChild(darkThemeSelect)
+
+  const lightThemeBlock = h('div', 'theme-block')
+  lightThemeBlock.appendChild(i18n(h('span', 'theme-label'), 'theme.light'))
+  const lightThemeSelect = document.createElement('select')
+  lightThemeSelect.className = 'theme-select'
+  for (const id of LIGHT_THEME_IDS) {
+    const option = i18n(document.createElement('option') as HTMLOptionElement, `theme.light.${id}`)
+    option.value = id
+    lightThemeSelect.appendChild(option)
+  }
+  lightThemeSelect.addEventListener('change', () => {
+    client.updateSettings({ lightTheme: lightThemeSelect.value as LightThemeId })
+  })
+  lightThemeBlock.appendChild(lightThemeSelect)
+
+  themePicker.append(themeModeBlock, darkThemeBlock, lightThemeBlock)
+  themeSection.append(themePicker)
+
+  // 语言卡片（外观组）：系统默认 / 中文 / English
+  const languageSection = card('card.language')
+  languageSection.classList.add('settings-card--wide')
+  const languageButtons = new Map<LanguageId, HTMLElement>()
+  const languageGroup = h('div', 'theme-mode theme-mode--language')
+  const LANG_LABEL_KEYS: Record<LanguageId, string> = { system: 'lang.system', zh: 'lang.zh', en: 'lang.en' }
+  for (const id of LANGUAGE_IDS) {
+    const button = i18n(h('button', 'theme-mode-btn'), LANG_LABEL_KEYS[id])
+    button.setAttribute('type', 'button')
+    button.addEventListener('click', () => {
+      if (currentSettings?.language === id) return
+      client.updateSettings({ language: id })
+    })
+    languageButtons.set(id, button)
+    languageGroup.appendChild(button)
+  }
+  languageSection.appendChild(languageGroup)
+
   // 存储卡片（只读路径 + 复制）
-  const storageSection = card('存储')
+  const storageSection = card('card.storage')
   const storageRow = h('div', 'storage-row')
   const storageIcon = h('span', 'storage-icon')
   storageIcon.innerHTML = (
@@ -227,44 +320,46 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
     '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>'
   )
-  const storagePath = h('div', 'storage-path', '未找到')
-  const storageCopy = h('button', 'icon-button', '复制')
+  const storagePath = h('div', 'storage-path', t('storage.notFound'))
+  // 基础文案挂 data-i18n；点击后的「已复制」反馈由 click 处理临时覆盖。
+  const storageCopy = i18n(h('button', 'icon-button'), 'storage.copy')
   storageCopy.setAttribute('type', 'button')
-  storageCopy.title = '复制宠物库路径'
+  storageCopy.title = t('storage.copy')
   storageCopy.addEventListener('click', () => {
     const text = storagePath.textContent ?? ''
-    if (!text || text === '未找到') return
+    if (!text || text === t('storage.notFound')) return
     if (navigator.clipboard?.writeText) {
       void navigator.clipboard.writeText(text)
         .then(() => {
-          storageCopy.textContent = '已复制'
-          setTimeout(() => { storageCopy.textContent = '复制' }, 1200)
+          storageCopy.textContent = t('storage.copied')
+          setTimeout(() => { storageCopy.textContent = t('storage.copy') }, 1200)
         })
         .catch(() => { /* 剪贴板不可用时静默 */ })
     }
   })
   storageRow.append(storageIcon, storagePath, storageCopy)
-  const storageHint = p('宠物包保存在 Codex 的宠物库目录，桌宠只读不改。', 'setting-hint')
-  storageSection.append(storageRow, storageHint)
+  storageSection.append(storageRow, pt('storage.hint', 'setting-hint'))
 
   // 系统信息卡片（来源工具 + 版本合并，避免底部碎片化）
-  const systemSection = card('系统信息')
+  const systemSection = card('card.system')
   const sourcesRow = h('div', 'system-row')
-  sourcesRow.appendChild(h('span', 'system-label', '来源工具'))
+  sourcesRow.appendChild(i18n(h('span', 'system-label'), 'system.source'))
   const agentsList = h('ul', 'agents-list')
-  const agentsEmpty = h('li', 'agents-empty', '暂无连接')
+  const agentsEmpty = h('li', 'agents-empty', t('system.noAgents'))
   agentsList.appendChild(agentsEmpty)
   sourcesRow.appendChild(agentsList)
   const versionRow = h('div', 'system-row')
-  versionRow.appendChild(h('span', 'system-label', '版本'))
-  const versionValue = h('span', 'system-value', `${APP_NAME} v${APP_VERSION} · 线协议 v${PROTOCOL_VERSION}`)
+  versionRow.appendChild(i18n(h('span', 'system-label'), 'system.version'))
+  const versionValue = h('span', 'system-value', `${t('app.name')} v${APP_VERSION} · ${t('system.protocol')} v${PROTOCOL_VERSION}`)
   versionRow.appendChild(versionValue)
   systemSection.append(sourcesRow, versionRow)
 
   settingsPage.append(
-    h('div', 'settings-group-title', '桌宠'),
+    i18n(h('div', 'settings-group-title'), 'group.pet'),
     petSection, zoomSection, wakeSection,
-    h('div', 'settings-group-title', '系统'),
+    i18n(h('div', 'settings-group-title'), 'group.appearance'),
+    themeSection, languageSection,
+    i18n(h('div', 'settings-group-title'), 'group.system'),
     storageSection, systemSection,
   )
 
@@ -276,25 +371,27 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   searchbar.appendChild(h('span', '', '🔍'))
   const searchInput = document.createElement('input')
   searchInput.type = 'search'
-  searchInput.placeholder = '搜索宠物（名称 / 描述 / 来源目录）'
+  searchInput.placeholder = t('search.pets.placeholder')
   searchInput.className = 'petdex-search-input'
+  searchInput.dataset.i18nPlaceholder = 'search.pets.placeholder'
   searchbar.appendChild(searchInput)
 
   // 本地宠物卡片：标题行右侧放「刷新」小按钮，避免通栏按钮抢眼
   const localCard = h('section', 'settings-card')
   const localHeader = h('div', 'card-header')
-  localHeader.appendChild(h('span', 'settings-section-title', '本地宠物'))
+  localHeader.appendChild(i18n(h('span', 'settings-section-title'), 'pets.local'))
   const petRefresh = h('button', 'refresh-button', '')
   petRefresh.setAttribute('type', 'button')
-  petRefresh.title = '重新扫描 ~/.codex/pets 宠物库'
+  petRefresh.title = t('pets.refresh')
   petRefresh.innerHTML = (
     '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" ' +
     'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
     '<path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>' +
-    '<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>刷新'
+    '<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>'
   )
+  petRefresh.appendChild(i18n(h('span'), 'pets.refresh'))
   localHeader.appendChild(petRefresh)
-  const petHint = p('宠物库直接读取 Codex 的 ~/.codex/pets/，桌宠不复制、不导入、不删除。', 'setting-hint')
+  const petHint = pt('pets.hint', 'setting-hint')
   const browser = h('div', 'pet-browser')
   const localList = h('div', 'pet-list')
   const previewPanel = h('div', 'pet-browser-preview')
@@ -323,31 +420,31 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   marketSearchbar.appendChild(h('span', '', '🔍'))
   const marketSearch = document.createElement('input')
   marketSearch.type = 'search'
-  marketSearch.placeholder = '搜索市场（名称 / 作者 / 类型）'
+  marketSearch.placeholder = t('search.market.placeholder')
   marketSearch.className = 'petdex-search-input'
+  marketSearch.dataset.i18nPlaceholder = 'search.market.placeholder'
   marketSearchbar.appendChild(marketSearch)
   const marketKind = document.createElement('select')
   marketKind.className = 'market-kind'
   const allKindOption = document.createElement('option')
   allKindOption.value = ''
-  allKindOption.textContent = '全部类型'
+  allKindOption.textContent = t('market.allKinds')
   marketKind.appendChild(allKindOption)
   marketToolbar.append(marketSearchbar, marketKind)
 
   const marketCard = h('section', 'settings-card')
   const marketHeaderRow = h('div', 'card-header')
-  marketHeaderRow.appendChild(h('span', 'settings-section-title', '在线市场'))
+  marketHeaderRow.appendChild(i18n(h('span', 'settings-section-title'), 'market.online'))
   const marketStatus = p('', 'market-status')
   const marketList = h('div', 'market-list')
   const marketPager = h('div', 'market-pager')
-  const marketPrev = h('button', 'pager-button', '‹ 上一页')
+  const marketPrev = i18n(h('button', 'pager-button'), 'market.prev')
   marketPrev.setAttribute('type', 'button')
   const marketPageLabel = h('span', 'pager-label', '')
-  const marketNext = h('button', 'pager-button', '下一页 ›')
+  const marketNext = i18n(h('button', 'pager-button'), 'market.next')
   marketNext.setAttribute('type', 'button')
   marketPager.append(marketPrev, marketPageLabel, marketNext)
-  const marketHint = p('宠物由 petdex.dev 提供；安装写入 ~/.codex/pets/<slug>/，可在「宠物」页选用。', 'setting-hint')
-  marketCard.append(marketHeaderRow, marketStatus, marketList, marketPager, marketHint)
+  marketCard.append(marketHeaderRow, marketStatus, marketList, marketPager, pt('market.hint', 'setting-hint'))
 
   marketPage.append(marketToolbar, marketCard)
 
@@ -379,8 +476,9 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   marketDetailLink.href = 'https://petdex.dev/zh'
   marketDetailLink.target = '_blank'
   marketDetailLink.rel = 'noopener noreferrer'
-  marketDetailLink.textContent = '在 petdex 查看 ›'
   marketDetailLink.className = 'market-detail-link'
+  marketDetailLink.dataset.i18n = 'market.viewOnPetdex'
+  marketDetailLink.textContent = t('market.viewOnPetdex')
   marketDetailActions.append(marketDetailInstall, marketDetailUninstall, marketDetailLink)
   marketDetailCard.append(marketDetailClose, marketDetailPreview, marketDetailName, marketDetailMeta, marketDetailDesc, marketDetailActions)
   marketDetail.appendChild(marketDetailCard)
@@ -405,10 +503,10 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     const installing = installingSlugs.has(detailPet.slug)
     const uninstalling = uninstallingSlugs.has(detailPet.slug)
     ;(marketDetailInstall as HTMLButtonElement).disabled = installed || installing || uninstalling
-    marketDetailInstall.textContent = installed ? '已安装' : installing ? '安装中…' : '安装'
+    marketDetailInstall.textContent = installed ? t('market.installed') : installing ? t('market.installing') : t('market.install')
     marketDetailUninstall.hidden = !installed
     ;(marketDetailUninstall as HTMLButtonElement).disabled = uninstalling
-    marketDetailUninstall.textContent = uninstalling ? '卸载中…' : '卸载'
+    marketDetailUninstall.textContent = uninstalling ? t('market.uninstalling') : t('market.uninstall')
   }
 
   // 加载方框动画周期（与 CSS market-box-grow 的 1.3s 一致）。
@@ -630,7 +728,7 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     if (marketLoading) return
     clearPrefetch()
     marketLoading = true
-    marketStatus.textContent = '加载市场中…'
+    marketStatus.textContent = t('market.loading')
     client.requestMarketList({
       query: marketSearch.value.trim() || undefined,
       kind: marketKind.value || undefined,
@@ -663,7 +761,8 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
       cardEl.appendChild(body)
       const installed = isMarketInstalled(pet)
       const installing = installingSlugs.has(pet.slug)
-      const action = h('button', 'pet-card-action market-install', installed ? '已安装' : installing ? '安装中' : '安装')
+      const action = h('button', 'pet-card-action market-install',
+        installed ? t('market.installed') : installing ? t('market.installing') : t('market.install'))
       action.setAttribute('type', 'button')
       ;(action as HTMLButtonElement).disabled = installed || installing
       if (!installed && !installing) {
@@ -680,7 +779,7 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
       marketList.appendChild(cardEl)
     }
     if (marketPets.length === 0 && !marketLoading) {
-      marketList.appendChild(h('div', 'empty-state', '没有匹配的市场宠物。'))
+      marketList.appendChild(h('div', 'empty-state', t('market.empty')))
     }
   }
 
@@ -781,8 +880,8 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     if (currentKind && (payload.kinds ?? []).includes(currentKind)) marketKind.value = currentKind
     const pageSize = payload.pageSize > 0 ? payload.pageSize : computeMarketPageSize()
     const totalPages = Math.max(1, Math.ceil(marketTotal / pageSize))
-    marketStatus.textContent = `共 ${marketTotal} 个宠物`
-    marketPageLabel.textContent = `第 ${marketCurrentPage} / ${totalPages} 页`
+    marketStatus.textContent = t('market.count', { n: marketTotal })
+    marketPageLabel.textContent = t('market.page', { x: marketCurrentPage, y: totalPages })
     ;(marketPrev as HTMLButtonElement).disabled = marketCurrentPage <= 1
     ;(marketNext as HTMLButtonElement).disabled = marketCurrentPage >= totalPages
     renderMarketList()
@@ -800,10 +899,13 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     // 当前页失败：必须复位加载态，否则 marketLoading 卡 true，
     // 后续「下一页/搜索/缩放」全被 if (marketLoading) return 拦截 → 界面假死。
     marketLoading = false
-    marketStatus.textContent = '市场加载失败'
-    marketPageLabel.textContent = `第 ${marketCurrentPage} / ${Math.max(1, Math.ceil(marketTotal / Math.max(computeMarketPageSize(), 1)))} 页`
+    marketStatus.textContent = t('market.failed')
+    marketPageLabel.textContent = t('market.page', {
+      x: marketCurrentPage,
+      y: Math.max(1, Math.ceil(marketTotal / Math.max(computeMarketPageSize(), 1))),
+    })
     ;(marketNext as HTMLButtonElement).disabled = false // 允许再次点击（兼作重试入口）
-    setError(`市场加载失败: ${message}`)
+    setError(t('market.loadFailedBody', { message }))
   }
 
   function markMarketInstalled(info: { id: string; displayName: string; sourceDir: string }): void {    const slug = basenameOf(info.sourceDir).toLowerCase()
@@ -860,7 +962,7 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     if (!detailPet || detailPet.slug !== payload.slug) return
     marketDetailRenderer.setPet(payload.pet)
     marketDetailRenderer.setSprite(payload.spriteDataUrl)
-    marketDetailDesc.textContent = payload.pet?.description ?? '（无描述）'
+    marketDetailDesc.textContent = payload.pet?.description ?? t('market.noDesc')
     // 完整数据（或解析兜底）到达后，隐藏缩略图占位，交由动画渲染器接管预览。
     marketDetailPlaceholder.hidden = true
     // 加载方框至少完整播放一轮再消失：数据秒到时，等动画走完剩余时间。
@@ -897,20 +999,24 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   let currentSettings: AppStateSnapshot['settings'] | null = null
   let currentPets: AppStateSnapshot['pets'] = []
   let currentAgents: string[] = []
+  let libraryRootText: string | null = null
+
+  let currentPage: 'settings' | 'pets' | 'market' = 'pets'
 
   function setPage(page: 'settings' | 'pets' | 'market'): void {
+    currentPage = page
     settingsTab.classList.toggle('is-active', page === 'settings')
     petsTab.classList.toggle('is-active', page === 'pets')
     marketTab.classList.toggle('is-active', page === 'market')
     settingsPage.classList.toggle('is-active', page === 'settings')
     petsPage.classList.toggle('is-active', page === 'pets')
     marketPage.classList.toggle('is-active', page === 'market')
-    titleEl.textContent = page === 'settings' ? '设置' : page === 'pets' ? '宠物' : '市场'
-    subtitleEl.textContent = page === 'settings'
-      ? '管理桌宠、缩放、唤醒与宠物库。'
+    titleEl.textContent = t(page === 'settings' ? 'page.settings.title' : page === 'pets' ? 'page.pets.title' : 'page.market.title')
+    subtitleEl.textContent = t(page === 'settings'
+      ? 'page.settings.subtitle'
       : page === 'pets'
-        ? '管理本地宠物。'
-        : '从 petdex.dev 发现并安装更多宠物。'
+        ? 'page.pets.subtitle'
+        : 'page.market.subtitle')
     // 切页时回到顶部，避免上一页的滚动位置把当前页开头挤到视口外。
     main.scrollTop = 0
     // 首次进入市场页时自动加载列表。
@@ -923,6 +1029,76 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
 
   // 默认打开「宠物」页：设置窗口的主要用途是选宠物，配置是次要的。
   setPage('pets')
+
+  /* ---------- 主题应用 ---------- */
+
+  // 「系统」模式跟随操作系统深浅色；OS 切换时无需刷新，直接重算 data-theme。
+  const systemDarkQuery = window.matchMedia('(prefers-color-scheme: dark)')
+
+  function resolveThemeId(settings: AppStateSnapshot['settings'] | null): ThemeId {
+    const mode = settings?.themeMode ?? 'system'
+    const dark = settings?.darkTheme ?? 'graphite'
+    const light = settings?.lightTheme ?? 'classic'
+    if (mode === 'dark') return dark
+    if (mode === 'light') return light
+    return systemDarkQuery.matches ? dark : light
+  }
+
+  function applyTheme(): void {
+    const settings = currentSettings
+    const mode = settings?.themeMode ?? 'system'
+    document.body.dataset.theme = resolveThemeId(settings)
+    // 模式固定某一侧时，另一侧的选择先记住、暂不生效。
+    darkThemeBlock.classList.toggle('is-dimmed', mode === 'light')
+    lightThemeBlock.classList.toggle('is-dimmed', mode === 'dark')
+    for (const [modeKey, button] of themeModeButtons) {
+      button.classList.toggle('is-active', modeKey === mode)
+    }
+    darkThemeSelect.value = settings?.darkTheme ?? 'graphite'
+    lightThemeSelect.value = settings?.lightTheme ?? 'classic'
+  }
+
+  systemDarkQuery.addEventListener('change', () => applyTheme())
+
+  /* ---------- 语言应用 ---------- */
+
+  function applyLanguage(): void {
+    const lang = resolveLanguage(currentSettings?.language)
+    setLanguage(lang)
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en'
+    document.title = t('title.settings')
+    // 静态文案：data-i18n / data-i18n-placeholder 标记的节点统一重写。
+    root.querySelectorAll<HTMLElement>('[data-i18n]').forEach((el) => {
+      el.textContent = t(el.dataset.i18n as string)
+    })
+    root.querySelectorAll<HTMLInputElement>('[data-i18n-placeholder]').forEach((el) => {
+      el.placeholder = t(el.dataset.i18nPlaceholder as string)
+    })
+    // 「全部类型」选项不在 data-i18n 覆盖内（其余类型选项为服务端数据）。
+    const allKindOption = marketKind.querySelector<HTMLOptionElement>('option[value=""]')
+    if (allKindOption) allKindOption.textContent = t('market.allKinds')
+    // 控件状态：主题模式/主题选择/语言选择的高亮与置灰。
+    for (const [mode, button] of themeModeButtons) {
+      button.classList.toggle('is-active', (currentSettings?.themeMode ?? 'system') === mode)
+    }
+    darkThemeSelect.value = currentSettings?.darkTheme ?? 'graphite'
+    lightThemeSelect.value = currentSettings?.lightTheme ?? 'classic'
+    darkThemeBlock.classList.toggle('is-dimmed', (currentSettings?.themeMode ?? 'system') === 'light')
+    lightThemeBlock.classList.toggle('is-dimmed', (currentSettings?.themeMode ?? 'system') === 'dark')
+    for (const [id, button] of languageButtons) {
+      button.classList.toggle('is-active', (currentSettings?.language ?? 'system') === id)
+    }
+    // 动态文案：由各渲染函数按当前语言重算。
+    setPage(currentPage)
+    renderStatus()
+    renderAgents()
+    renderPetList()
+    renderMarketList()
+    updateDetailInstall()
+    storagePath.textContent = libraryRootText ?? t('storage.notFound')
+    versionValue.textContent = `${t('app.name')} v${APP_VERSION} · ${t('system.protocol')} v${PROTOCOL_VERSION}`
+    applyTheme()
+  }
 
   /* ---------- 渲染 ---------- */
 
@@ -994,14 +1170,14 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     previewPanelDesc.textContent = pet?.description ?? ''
     previewPanelDesc.title = pet?.description ?? ''
     previewPanelMeta.textContent = pet && pet.sourceDir && pet.sourceDir !== pet?.displayName
-      ? `来源：${pet.sourceDir}`
+      ? t('pet.sourcePrefix', { dir: pet.sourceDir })
       : ''
     // 「设为桌宠」按钮始终可见，作用于当前预览的宠物（已选中时禁用）；
     // 无宠物可预览时（未悬停且未选择）隐藏。
     const isCurrent = target !== null && currentSettings?.selectedPetId === target
     previewPanelAction.hidden = target === null
     ;(previewPanelAction as HTMLButtonElement).disabled = isCurrent
-    previewPanelAction.textContent = isCurrent ? '已设为桌宠' : '设为桌宠'
+    previewPanelAction.textContent = isCurrent ? t('pet.setAsDone') : t('pet.setAs')
     if (target === null) {
       hoverRenderer.setPet(null)
       hoverRenderer.setSprite(null)
@@ -1024,10 +1200,10 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
       cardEl.classList.toggle('is-active', currentSettings?.selectedPetId === null)
       cardEl.appendChild(h('div', 'pet-card-thumb'))
       const body = h('div', 'pet-card-body')
-      body.appendChild(h('strong', '', '不选择宠物'))
-      body.appendChild(h('span', '', '隐藏桌宠上的宠物'))
+      body.appendChild(h('strong', '', t('pet.noneCard')))
+      body.appendChild(h('span', '', t('pet.noneCardHint')))
       cardEl.appendChild(body)
-      const action = h('button', 'pet-card-action', currentSettings?.selectedPetId === null ? '当前' : '使用')
+      const action = h('button', 'pet-card-action', currentSettings?.selectedPetId === null ? t('pet.current') : t('pet.use'))
       action.setAttribute('type', 'button')
       action.addEventListener('click', () => {
         client.updateSettings({ selectedPetId: null })
@@ -1069,18 +1245,18 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
       desc.title = pet.description || pet.id
       body.appendChild(desc)
       cardEl.appendChild(body)
-      const action = h('button', 'pet-card-action', active ? '当前' : '使用')
+      const action = h('button', 'pet-card-action', active ? t('pet.current') : t('pet.use'))
       action.setAttribute('type', 'button')
       action.addEventListener('click', () => {
         client.updateSettings({ selectedPetId: pet.id })
       })
       // 删除按钮：从本地宠物库移除该宠物。
-      const deleteBtn = h('button', 'pet-card-delete', '删除')
+      const deleteBtn = h('button', 'pet-card-delete', t('pet.delete'))
       deleteBtn.setAttribute('type', 'button')
-      deleteBtn.title = `删除「${pet.displayName}」（从本地宠物库移除）`
+      deleteBtn.title = t('pet.deleteConfirm', { name: pet.displayName })
       deleteBtn.addEventListener('click', (event) => {
         event.stopPropagation()
-        const confirmed = window.confirm(`确定删除「${pet.displayName}」吗？将从本地宠物库移除。`)
+        const confirmed = window.confirm(t('pet.deleteConfirm', { name: pet.displayName }))
         if (!confirmed) return
         if (currentSettings?.selectedPetId === pet.id) {
           client.updateSettings({ selectedPetId: null })
@@ -1117,13 +1293,13 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
 
     // 宠物页：全部
     if (shown.length === 0) {
-      localList.appendChild(h('div', 'empty-state', query ? '没有匹配的宠物。' : '本地宠物库为空。'))
+      localList.appendChild(h('div', 'empty-state', query ? t('pets.noMatch') : t('pets.empty')))
     } else {
       for (const pet of shown) localList.appendChild(renderPetCard(pet))
     }
 
     const selected = currentPets.find((pet) => pet.id === currentSettings?.selectedPetId)
-    previewName.textContent = selected?.displayName ?? '未选择'
+    previewName.textContent = selected?.displayName ?? t('pet.unselected')
     const nextPreviewId = currentSettings?.selectedPetId ?? null
     if (previewPetId !== nextPreviewId) setPreviewPet(nextPreviewId)
     // 刷新宠物页预览面板：未悬停时回落到选中宠物；
@@ -1136,7 +1312,7 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   function renderAgents(): void {
     agentsList.innerHTML = ''
     if (currentAgents.length === 0) {
-      agentsList.appendChild(h('li', 'agents-empty', '暂无连接'))
+      agentsList.appendChild(h('li', 'agents-empty', t('system.noAgents')))
       return
     }
     for (const agent of currentAgents) {
@@ -1145,6 +1321,13 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   }
 
   function renderSettings(): void {
+    applyTheme()
+    // 语言变化（含首次拿到持久化设置）时整体重写文案；applyLanguage 内部
+    // 会 setLanguage，之后 resolveLanguage 与 currentLanguage 一致，不会循环。
+    if (resolveLanguage(currentSettings?.language) !== currentLanguage()) {
+      applyLanguage()
+      return
+    }
     if (currentSettings === null) return
     zoomSlider.value = String(currentSettings.zoom)
     zoomValue.textContent = `${Math.round(currentSettings.zoom * 100)}%`
@@ -1153,9 +1336,9 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
 
   function renderStatus(): void {
     const agents = currentAgents.length > 0 ? currentAgents.join('、') : null
-    statusLine.textContent = agents !== null ? `已连接：${agents}` : '未连接来自工具'
+    statusLine.textContent = agents !== null ? t('status.connectedTo', { agents }) : t('status.noTools')
     statusLine.classList.toggle('is-online', agents !== null)
-    statusPill.textContent = agents !== null ? '已连接' : '离线'
+    statusPill.textContent = agents !== null ? t('status.online') : t('status.offline')
     statusPill.classList.toggle('is-online', agents !== null)
   }
 
@@ -1209,7 +1392,8 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     currentSettings = state.settings
     currentPets = state.pets
     currentAgents = state.agents
-    storagePath.textContent = state.libraryRoot || '未找到'
+    libraryRootText = state.libraryRoot || null
+    storagePath.textContent = state.libraryRoot || t('storage.notFound')
     renderSettings()
     renderPetList()
     renderAgents()
@@ -1261,6 +1445,9 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     setMarketThumbError,
     setMarketPet,
   }
+  // 挂收尾时统一应用一次语言（重写静态文案 + 重算动态文案）。
+  // 不能提前：renderPetList 等依赖的 petData 等常量在渲染段才初始化。
+  applyLanguage()
   return app
 }
 

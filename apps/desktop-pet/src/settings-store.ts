@@ -8,6 +8,20 @@
 
 import { createRequire } from 'node:module'
 
+import {
+  DARK_THEME_IDS,
+  LANGUAGE_IDS,
+  LIGHT_THEME_IDS,
+  THEME_MODES,
+  type DarkThemeId,
+  type LanguageId,
+  type LightThemeId,
+  type ThemeMode,
+} from './app-constants.js'
+
+export type { DarkThemeId, LanguageId, LightThemeId, ThemeId, ThemeMode } from './app-constants.js'
+export { DARK_THEME_IDS, LANGUAGE_IDS, LIGHT_THEME_IDS, THEME_MODES } from './app-constants.js'
+
 export interface PetSettings {
   /** Selected pet id from the Codex pet library, or null for no selection. */
   selectedPetId: string | null
@@ -15,6 +29,14 @@ export interface PetSettings {
   zoom: number
   /** Wake = the pet is visible and follows session state. */
   awake: boolean
+  /** Theme mode: follow the OS preference, or pin dark / light. */
+  themeMode: ThemeMode
+  /** Theme used when the effective appearance is dark. */
+  darkTheme: DarkThemeId
+  /** Theme used when the effective appearance is light. */
+  lightTheme: LightThemeId
+  /** UI language: follow the OS, or pin Chinese / English. */
+  language: LanguageId
   /** Last pet-window outer X position (physical pixels), or null to use default. */
   windowX?: number | null
   /** Last pet-window outer Y position (physical pixels), or null to use default. */
@@ -25,6 +47,10 @@ export const DEFAULT_SETTINGS: PetSettings = Object.freeze({
   selectedPetId: null,
   zoom: 1.2,
   awake: true,
+  themeMode: 'system',
+  darkTheme: 'graphite',
+  lightTheme: 'classic',
+  language: 'system',
   windowX: null,
   windowY: null,
 })
@@ -67,6 +93,22 @@ export function clampZoom(value: unknown): number {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, num))
 }
 
+export function clampThemeMode(value: unknown): ThemeMode {
+  return THEME_MODES.includes(value as ThemeMode) ? value as ThemeMode : DEFAULT_SETTINGS.themeMode
+}
+
+export function clampDarkTheme(value: unknown): DarkThemeId {
+  return DARK_THEME_IDS.includes(value as DarkThemeId) ? value as DarkThemeId : DEFAULT_SETTINGS.darkTheme
+}
+
+export function clampLightTheme(value: unknown): LightThemeId {
+  return LIGHT_THEME_IDS.includes(value as LightThemeId) ? value as LightThemeId : DEFAULT_SETTINGS.lightTheme
+}
+
+export function clampLanguage(value: unknown): LanguageId {
+  return LANGUAGE_IDS.includes(value as LanguageId) ? value as LanguageId : DEFAULT_SETTINGS.language
+}
+
 export function sanitizeSettings(input: unknown): PetSettings {
   const record = (input !== null && typeof input === 'object' && !Array.isArray(input))
     ? input as Record<string, unknown>
@@ -86,6 +128,10 @@ export function sanitizeSettings(input: unknown): PetSettings {
     selectedPetId,
     zoom: clampZoom(record.zoom),
     awake: typeof record.awake === 'boolean' ? record.awake : DEFAULT_SETTINGS.awake,
+    themeMode: clampThemeMode(record.themeMode),
+    darkTheme: clampDarkTheme(record.darkTheme),
+    lightTheme: clampLightTheme(record.lightTheme),
+    language: clampLanguage(record.language),
     windowX,
     windowY,
   }

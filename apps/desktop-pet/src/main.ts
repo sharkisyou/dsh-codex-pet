@@ -12,6 +12,7 @@ import type { AppStateSnapshot, ActivitySnapshot, TrayItemSnapshot } from './con
 import { type ParsedPet } from '@yshark/pet-core'
 import { renderTrayItems } from './tray-ui.js'
 import { petLog } from './pet-log.js'
+import { resolveLanguage, setLanguage, t } from './i18n.js'
 
 const kind = detectWindowKind(window.location.search)
 const appEl = document.querySelector<HTMLElement>('#app')
@@ -19,7 +20,9 @@ const content = document.querySelector<HTMLElement>('#window-content')
 
 appEl?.classList.add(kind === 'settings' ? 'shell--settings' : kind === 'tray' ? 'shell--tray' : 'shell--pet')
 document.body.classList.add(kind === 'settings' ? 'settings-window' : kind === 'tray' ? 'tray-window' : 'pet-window')
-document.title = kind === 'settings' ? '桌宠设置' : kind === 'tray' ? '活动' : '桌宠'
+// 窗口标题先按系统语言；持久化语言选择随后由各窗口在设置同步时应用。
+setLanguage(resolveLanguage(null))
+document.title = kind === 'settings' ? t('title.settings') : kind === 'tray' ? t('title.tray') : t('title.pet')
 
 function isTauri(): boolean {
   return typeof window !== 'undefined' && Boolean((window as any).__TAURI_INTERNALS__)
@@ -142,7 +145,7 @@ if (kind === 'pet') {
       // 有活动会话：角标常驻（数量 + 三角）；收起时向下三角，展开时向上三角
       trayToggle.hidden = false
       trayToggle.classList.toggle('open', trayExpanded)
-      trayToggle.title = trayExpanded ? '收起活动列表' : '展开活动列表'
+      trayToggle.title = trayExpanded ? t('tray.collapse') : t('tray.expand')
       const count = trayToggle.querySelector<HTMLElement>('.tray-count')
       if (count) count.textContent = String(trayItems.length)
       if (isTauri()) {
@@ -300,6 +303,17 @@ if (kind === 'pet') {
 
     /* ---------- 状态应用 ---------- */
 
+    /** 宠物窗文案随语言设置：右键菜单 + 角标提示 + 窗口标题。 */
+    function applyPetWindowLanguage(language: AppStateSnapshot['settings']['language'] | undefined): void {
+      setLanguage(resolveLanguage(language))
+      document.title = t('title.pet')
+      const menuSettings = document.querySelector<HTMLButtonElement>('#pet-menu-settings')
+      const menuHide = document.querySelector<HTMLButtonElement>('#pet-menu-hide')
+      if (menuSettings) menuSettings.textContent = t('menu.settings')
+      if (menuHide) menuHide.textContent = t('menu.hide')
+      if (trayToggle) trayToggle.title = trayExpanded ? t('tray.collapse') : t('tray.expand')
+    }
+
     function applySettings(settings: AppStateSnapshot['settings']): void {
       const nextPet = settings.selectedPetId
       if (nextPet !== selectedPetId) {
@@ -329,6 +343,7 @@ if (kind === 'pet') {
           }
         }
       }
+      applyPetWindowLanguage(settings.language)
     }
 
     function applyActivity(activity: ActivitySnapshot): void {
@@ -388,6 +403,9 @@ if (kind === 'pet') {
 
     // Expose for debugging / tests.
     ;(window as any).__desktopPet = { client, renderer, shell, applyState }
+
+    // 挂载后先按系统语言应用一次宠物窗文案；持久化选择随设置同步覆盖。
+    applyPetWindowLanguage(undefined)
   }
 } else if (kind === 'tray') {
   void mountTrayWindow()
@@ -434,7 +452,7 @@ if (kind === 'pet') {
           app?.setError(message)
         },
         onStatus(connected) {
-          if (!connected) app?.setError('无法连接桌宠服务，设置窗处于离线显示')
+          if (!connected) app?.setError(t('error.offline'))
           else app?.setError(null)
         },
       },
@@ -459,10 +477,12 @@ function mountTrayWindow(): void {
   header.className = 'tray-window-header'
   const title = document.createElement('span')
   title.className = 'tray-window-title'
+  const titleText = document.createElement('span')
+  titleText.textContent = t('tray.title')
   const count = document.createElement('span')
   count.className = 'tray-count'
   count.textContent = '0'
-  title.append('活动 (', count, ')')
+  title.append(titleText, ' (', count, ')')
   header.append(title)
 
   const list = document.createElement('div')
@@ -502,19 +522,27 @@ function mountTrayWindow(): void {
     }, 80)
   }
 
+  /** 托盘窗文案随语言设置：标题（空态等在 apply 内重算）。 */
+  function applyTrayLanguage(language: AppStateSnapshot['settings']['language'] | undefined): void {
+    setLanguage(resolveLanguage(language))
+    titleText.textContent = t('tray.title')
+  }
+
   const client = createUiClient({
     handlers: {
       onState(state) {
+        applyTrayLanguage(state.settings?.language)
         apply(state.tray ?? state.activities ?? [])
       },
-      onStateSync({ activities, tray }) {
+      onStateSync({ settings, activities, tray }) {
+        applyTrayLanguage(settings?.language)
         apply(tray ?? activities ?? [])
       },
       onError(message) {
-        showEmpty(`连接错误：${message}`)
+        showEmpty(t('tray.connectError', { message }))
       },
       onStatus(connected) {
-        if (!connected) showEmpty('正在连接桌宠服务…')
+        if (!connected) showEmpty(t('tray.connecting'))
       },
     },
   })
@@ -523,7 +551,7 @@ function mountTrayWindow(): void {
     const listItems = items ?? []
     count.textContent = String(listItems.length)
     if (listItems.length === 0) {
-      showEmpty('暂无活动')
+      showEmpty(t('tray.empty'))
       fitHeight()
       return
     }

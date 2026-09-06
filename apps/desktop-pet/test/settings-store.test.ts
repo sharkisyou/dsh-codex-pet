@@ -63,14 +63,48 @@ test('sanitizes invalid persisted values', () => {
     selectedPetId: 42,
     zoom: 99,
     awake: 'yes',
+    themeMode: 'auto',
+    darkTheme: 'solarized',
+    lightTheme: 7,
+    language: 'fr',
     unknown: true,
   })
   assert.equal(sanitized.selectedPetId, null)
   assert.equal(sanitized.zoom, ZOOM_MAX)
+  assert.equal(sanitized.themeMode, DEFAULT_SETTINGS.themeMode)
+  assert.equal(sanitized.darkTheme, DEFAULT_SETTINGS.darkTheme)
+  assert.equal(sanitized.lightTheme, DEFAULT_SETTINGS.lightTheme)
+  assert.equal(sanitized.language, DEFAULT_SETTINGS.language)
   const tiny = sanitizeSettings({ zoom: -3 })
   assert.equal(tiny.zoom, ZOOM_MIN)
   const nonNumber = sanitizeSettings({ zoom: '2.5' })
   assert.equal(nonNumber.zoom, DEFAULT_SETTINGS.zoom)
+})
+
+test('sanitizes theme fields and persists valid ones', async () => {
+  assert.equal(sanitizeSettings({ themeMode: 'dark' }).themeMode, 'dark')
+  assert.equal(sanitizeSettings({ darkTheme: 'neon' }).darkTheme, 'neon')
+  assert.equal(sanitizeSettings({ lightTheme: 'clear-sky' }).lightTheme, 'clear-sky')
+  assert.equal(sanitizeSettings({ language: 'en' }).language, 'en')
+
+  const dir = await makeTempDir()
+  try {
+    const store = createSettingsStore({ dataDir: dir })
+    const updated = await store.update({ themeMode: 'dark', darkTheme: 'midnight', lightTheme: 'warm-paper', language: 'en' })
+    assert.equal(updated.themeMode, 'dark')
+    assert.equal(updated.darkTheme, 'midnight')
+    assert.equal(updated.lightTheme, 'warm-paper')
+    assert.equal(updated.language, 'en')
+
+    const reloaded = createSettingsStore({ dataDir: dir })
+    const loaded = await reloaded.load()
+    assert.equal(loaded.themeMode, 'dark')
+    assert.equal(loaded.darkTheme, 'midnight')
+    assert.equal(loaded.lightTheme, 'warm-paper')
+    assert.equal(loaded.language, 'en')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test('persists pet-window position', async () => {

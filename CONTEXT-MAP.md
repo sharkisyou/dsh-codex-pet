@@ -3,7 +3,15 @@
 ## Contexts
 
 - [Pet](./plugins/pet/CONTEXT.md) — DSH Web 界面里的状态驱动悬浮宠物（宠物包与 Codex 宠物包格式兼容）
-- [桌宠应用](./apps/desktop-pet/CONTEXT.md) — Tauri 桌宠：宠物窗/设置窗 + 在线宠物市场（petdex 浏览/安装/缩略图，后端驱动）
+- [桌宠应用](./apps/desktop-pet/CONTEXT.md) — Tauri 桌宠：宠物窗/设置窗 + 在线宠物市场（petdex 浏览/安装/缩略图，后端驱动）+ 外观主题与中英文界面
+
+## 桌宠外观与语言（方案要点）
+
+> 详细词汇表见 [桌宠应用 CONTEXT.md](./apps/desktop-pet/CONTEXT.md)，决策见 [ADR 0005](./docs/adr/0005-settings-theme-and-language.md)。
+
+- **模型**：主题模式（系统/深色/浅色）+ 深色侧主题 + 浅色侧主题 + 界面语言（系统默认/中文/English）各自持久化（`themeMode / darkTheme / lightTheme / language`）；非法值回退默认，旧 settings.json 兼容。
+- **主题**：7 套主题 = 7 组 CSS 变量 token（浅色 classic/暖纸/晴空，深色石墨黑/暖夜/午夜蓝/霓虹终端），`body[data-theme]` 切换且**只作用于设置窗**；系统模式经 `matchMedia` 实时跟随 OS 深浅色。
+- **语言**：`i18n.ts` 词典 + `data-i18n` 静态文案重写，切换即时生效，覆盖设置窗、宠物窗右键菜单与托盘窗；`navigator.language` 无变更事件，系统语言在窗口重开/设置同步时解析。
 
 ## 桌宠市场（方案要点）
 

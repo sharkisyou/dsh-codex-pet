@@ -15,6 +15,7 @@ import type { AppController, AppStateSnapshot } from './controller.js'
 import type { WsLike } from './server.js'
 import type { Market } from './market.js'
 import type { MarketPet } from './market-types.js'
+import { clampDarkTheme, clampLanguage, clampLightTheme, clampThemeMode } from './settings-store.js'
 
 export const UI_PROTOCOL_PATH = `${PROTOCOL_PATH}/ui`
 
@@ -154,6 +155,10 @@ export function createUiGateway(options: UiGatewayOptions): UiGateway {
           ...(typeof patch.selectedPetId === 'string' || patch.selectedPetId === null ? { selectedPetId: patch.selectedPetId } : {}),
           ...(typeof patch.zoom === 'number' ? { zoom: patch.zoom } : {}),
           ...(typeof patch.awake === 'boolean' ? { awake: patch.awake } : {}),
+          ...(typeof patch.themeMode === 'string' ? { themeMode: clampThemeMode(patch.themeMode) } : {}),
+          ...(typeof patch.darkTheme === 'string' ? { darkTheme: clampDarkTheme(patch.darkTheme) } : {}),
+          ...(typeof patch.lightTheme === 'string' ? { lightTheme: clampLightTheme(patch.lightTheme) } : {}),
+          ...(typeof patch.language === 'string' ? { language: clampLanguage(patch.language) } : {}),
           ...(typeof patch.windowX === 'number' && Number.isFinite(patch.windowX) ? { windowX: Math.round(patch.windowX) } : {}),
           ...(typeof patch.windowY === 'number' && Number.isFinite(patch.windowY) ? { windowY: Math.round(patch.windowY) } : {}),
           ...(typeof patch.x === 'number' && Number.isFinite(patch.x) ? { windowX: Math.round(patch.x) } : {}),
