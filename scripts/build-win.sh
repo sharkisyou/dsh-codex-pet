@@ -6,12 +6,15 @@
 # 可运行的 desktop-pet.exe（透明窗口 + 完整宠物）。
 #
 # 用法（在 WSL 仓库根目录执行）：
-#   ./scripts/build-win.sh sync     # 导出干净源码到 Windows（git archive）
-#   ./scripts/build-win.sh extract  # 导出 + Windows 解压
-#   ./scripts/build-win.sh deps     # 解压 + 首次装依赖/构建 TS 包
-#   ./scripts/build-win.sh build    # 构建前端 + 编译 Tauri exe
-#   ./scripts/build-win.sh run      # 启动 Windows 桌宠
-#   ./scripts/build-win.sh all      # 全流程（默认）
+#   ./scripts/build-win.sh sync          # 导出干净源码到 Windows（git archive）
+#   ./scripts/build-win.sh extract       # 导出 + Windows 解压
+#   ./scripts/build-win.sh deps          # 解压 + 首次装依赖/构建 TS 包
+#   ./scripts/build-win.sh build         # 构建前端 + 编译 Tauri exe（debug，增量复用 target）
+#   ./scripts/build-win.sh build-release # 构建前端 + 编译 release exe（增量复用 target/release）
+#   ./scripts/build-win.sh run           # 启动 Windows 桌宠（debug exe）
+#   ./scripts/build-win.sh run-release   # 启动 release 版桌宠
+#   ./scripts/build-win.sh all           # 全流程 debug（默认）
+#   ./scripts/build-win.sh release       # 全流程 release（正式形态：无终端、无日志）
 #
 # 前置条件：Windows 已装 Node/Rust(MSVC)/VS2022/WebView2；WSL 的
 # Vite(1420) + pet server(3720) 需保持运行（桌宠数据源）。
@@ -69,8 +72,20 @@ Write-Output '   deps done'"
 }
 
 # ---------- 4. 构建前端 + 编译 Tauri ----------
+# $1 可选 "release"：正式形态（windows 子系统，不创建终端、无 Rust 日志）；
+# 默认 debug：增量快、带控制台日志，适合日常迭代。首次 release 编译全量，
+# 可能需要数分钟；之后复用 target/release 增量。
 build_win() {
-  echo "▶ 4/5 Windows 构建前端 + 编译 Tauri..."
+  local mode="${1:-debug}"
+  local tauri_args="--debug"
+  local out_dir="debug"
+  if [ "$mode" = "release" ]; then
+    tauri_args=""
+    out_dir="release"
+    echo "▶ 4/5 Windows 构建前端 + 编译 Tauri（release，首次全量编译较慢）..."
+  else
+    echo "▶ 4/5 Windows 构建前端 + 编译 Tauri（debug）..."
+  fi
   ps "\$env:Path = \"\$env:USERPROFILE\\.cargo\\bin;\$WD\\node_modules\\.bin;\" + \$env:Path
 \$icons = \"\$WD\\apps\\desktop-pet\\src-tauri\\icons\"
 if (-not (Test-Path \"\$icons\\icon.ico\")) {
@@ -83,13 +98,16 @@ Set-Location \"\$WD\\packages\\pet-core\";     cmd /c \"npx tsc -p tsconfig.json
 Set-Location \"\$WD\\packages\\pet-protocol\"; cmd /c \"npm run build 2>&1\"
 Set-Location \"\$WD\\apps\\desktop-pet\"
 cmd /c \"npx tsc --noEmit 2>&1 && npx vite build 2>&1\"
-cmd /c \"npx tauri build --debug 2>&1\"
-Write-Output ('   → ' + \$PWD + '\\src-tauri\\target\\debug\\desktop-pet.exe')"
+cmd /c \"npx tauri build $tauri_args 2>&1\"
+Write-Output ('   → ' + \$PWD + '\\src-tauri\\target\\$out_dir\\desktop-pet.exe')"
 }
 
 # ---------- 5. 运行 ----------
+# $1 可选 "release"，与 build_win 的模式对应（exe 在 target/<mode>/ 下）。
 run_win() {
-  echo "▶ 5/5 启动 Windows 桌宠..."
+  local mode="${1:-debug}"
+  echo "▶ 5/5 启动 Windows 桌宠（$mode）..."
+  EXE_REL="apps\\desktop-pet\\src-tauri\\target\\$mode\\desktop-pet.exe"
   ps "\$exe = Join-Path \$WD \$EXE_REL
 if (-not (Test-Path \$exe)) { Write-Error \"exe 不存在: \$exe（先 build）\"; exit 1 }
 Start-Process \$exe
@@ -102,19 +120,25 @@ else    { Write-Output '   启动失败：未检测到 desktop-pet 进程' }"
 # ---------- 主流程 ----------
 CMD="${1:-all}"
 case "$CMD" in
-  sync)    sync_source ;;
-  extract) sync_source; extract_win ;;
-  deps)    sync_source; extract_win; install_deps ;;
-  build)   build_win ;;
-  run)     run_win ;;
-  all)     sync_source; extract_win; install_deps; build_win; run_win ;;
+  sync)          sync_source ;;
+  extract)       sync_source; extract_win ;;
+  deps)          sync_source; extract_win; install_deps ;;
+  build)         build_win ;;
+  build-release) build_win release ;;
+  run)           run_win ;;
+  run-release)   run_win release ;;
+  all)           sync_source; extract_win; install_deps; build_win; run_win ;;
+  release)       sync_source; extract_win; install_deps; build_win release; run_win release ;;
   *)
-    echo "用法: $0 {sync|extract|deps|build|run|all}" >&2
-    echo "  sync    —— 导出源码到 Windows" >&2
-    echo "  extract —— 导出 + Windows 解压" >&2
-    echo "  deps    —— 导出 + 解压 + 首次装依赖/构建 TS 包" >&2
-    echo "  build   —— 构建前端 + 编译 Tauri（增量复用 target）" >&2
-    echo "  run     —— 启动 Windows 桌宠" >&2
-    echo "  all     —— 全流程（默认）" >&2
+    echo "用法: $0 {sync|extract|deps|build|build-release|run|run-release|all|release}" >&2
+    echo "  sync          —— 导出源码到 Windows" >&2
+    echo "  extract       —— 导出 + Windows 解压" >&2
+    echo "  deps          —— 导出 + 解压 + 首次装依赖/构建 TS 包" >&2
+    echo "  build         —— 构建前端 + 编译 debug exe（增量复用 target）" >&2
+    echo "  build-release —— 构建前端 + 编译 release exe（增量复用 target/release）" >&2
+    echo "  run           —— 启动 debug 版桌宠" >&2
+    echo "  run-release   —— 启动 release 版桌宠" >&2
+    echo "  all           —— 全流程 debug（默认）" >&2
+    echo "  release       —— 全流程 release（正式形态：无终端、无日志）" >&2
     exit 1 ;;
 esac

@@ -27,15 +27,21 @@ Windows 侧一次性环境已装好（Node、Rust MSVC、VS2022、WebView2），
 > 已封装为 `scripts/build-win.sh`，在 WSL 仓库根目录执行。
 
 ```bash
-./scripts/build-win.sh sync     # 导出干净源码到 Windows（git archive）
-./scripts/build-win.sh extract  # 导出 + Windows 解压
-./scripts/build-win.sh deps     # 解压 + 首次装依赖/构建 TS 包
-./scripts/build-win.sh build    # 构建前端 + 编译 Tauri exe（增量复用 target）
-./scripts/build-win.sh run      # 启动 Windows 桌宠
-./scripts/build-win.sh all      # 全流程（默认）：sync→extract→deps→build→run
+./scripts/build-win.sh sync          # 导出干净源码到 Windows（git archive）
+./scripts/build-win.sh extract       # 导出 + Windows 解压
+./scripts/build-win.sh deps          # 解压 + 首次装依赖/构建 TS 包
+./scripts/build-win.sh build         # 构建前端 + 编译 debug exe（增量复用 target）
+./scripts/build-win.sh build-release # 构建前端 + 编译 release exe（增量复用 target/release）
+./scripts/build-win.sh run           # 启动 debug 版桌宠
+./scripts/build-win.sh run-release   # 启动 release 版桌宠
+./scripts/build-win.sh all           # 全流程 debug（默认）：sync→extract→deps→build→run
+./scripts/build-win.sh release       # 全流程 release：sync→extract→deps→build→run
 ```
 
 日常迭代（改代码后出 Windows 版）用 `all` 一键完成，全量编译约 2 分钟、增量约 7s。
+日常自用/出正式包用 `release`：release 是 windows 子系统（**不创建终端窗口、无 Rust
+日志**），性能更好；首次 release 全量编译 2-3 分钟，之后复用 `target/release` 增量。
+排障时用 debug 版（有控制台日志；WebView2 调试端口环境变量两种构建都可用）。
 
 ### 关键注意事项
 
