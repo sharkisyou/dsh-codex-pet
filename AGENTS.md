@@ -14,9 +14,9 @@
 
 ## Windows 桌面宠物构建（WSL → Windows）
 
-> 实测验证（2026-08-30）。目标：在 Windows 上原生运行 `apps/desktop-pet`（Tauri 2 桌宠）。
-> 结论：**WSL 里直接交叉编译到 Windows 不可行**（缺 MSVC/MinGW 链接器、无 sudo 装不了工具链）；
-> **正确做法是 WSL 通过 interop 调用 Windows 原生 Rust 工具链编译**。已验证成功：透明窗口 + 完整宠物 + 正常运行。
+> 实测验证（2026-08-30，MinGW 交叉编译 2026-09-07 补测）。目标：在 Windows 上原生运行 `apps/desktop-pet`（Tauri 2 桌宠）。
+> 结论：**日常主力是 WSL 通过 interop 调用 Windows 原生 Rust 工具链编译**（已验证成功：透明窗口 + 完整宠物 + 正常运行）。
+> 交叉编译方面：MSVC target 不可行（WSL 无 link.exe + Windows SDK）；**MinGW 交叉编译实测可行**（见下方关键注意事项），定位为备选路。
 
 ### 前置条件
 
@@ -59,5 +59,14 @@ Windows 侧一次性环境已装好（Node、Rust MSVC、VS2022、WebView2），
     Windows 桌宠本身靠 localhost relay 即可，不设也能连。
 - **调试捕获**：验证 Windows 桌宠渲染用 `PrintWindow` 截窗口（透明区域会呈黑色假象，不代表真的黑底）。
   视觉验证用 `~/.dsh/skills/vision.md` 的 Muse Spark 多模态模型分析截图。
-- **WSL 交叉编译不可行**：勿浪费时间尝试 `--target x86_64-pc-windows-msvc`（无 link.exe）或 MinGW（无 sudo）。
+- **MinGW 交叉编译实测可行（2026-09-07，备选路）**：WSL 可直接把 src-tauri 编成 Windows exe（debug 冷编译
+  1m37s，实测正常运行、图标已嵌入；release 亦验证）。一次性准备：`sudo apt install mingw-w64` +
+  `rustup target add x86_64-pc-windows-gnu`；`apps/desktop-pet/src-tauri/.cargo/config.toml`（未跟踪，不进
+  git archive）指定 `[target.x86_64-pc-windows-gnu] linker = "x86_64-w64-mingw32-gcc"`，然后
+  `cargo build --target x86_64-pc-windows-gnu [--release]`（需 `apps/desktop-pet/dist` 已存在）。
+  产物为 exe + `WebView2Loader.dll` 一对（gnu target 走动态加载，部署必须同目录成对）。
+  - 局限：安装器打包（NSIS/WiX）仍只在 Windows 侧；`--target x86_64-pc-windows-msvc` 依旧不可行（无
+    link.exe；cargo-xwin 曲线路未验证，勿浪费时间）。
+  - 坑：同 identifier 实例互斥——WebView2 用户数据目录按 identifier 共享（`%LOCALAPPDATA%\dev.yshark.desktop-pet`），
+    旧实例未退出时新实例会"秒退"，先关旧实例再启动。
 - **release 打包**：正式安装包用 `tauri build`（去掉 `--debug`），或配置 GitHub Actions `windows-latest` runner 自动构建。
