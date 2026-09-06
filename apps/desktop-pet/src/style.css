@@ -121,6 +121,19 @@ input {
   filter: none;
 }
 
+/* 宠物窗：未加载不显示占位框——服务端不可达/未选宠物时桌面不残留色块，
+   精灵就绪后随 opacity 淡入、切换宠物时淡出淡入。占位框样式保留给
+   无 body.pet-window 的上下文（如 file:// 直接打开的调试页面）。 */
+body.pet-window .pet {
+  transition: opacity 0.45s ease;
+}
+body.pet-window .pet:not(.is-loaded) {
+  opacity: 0;
+  visibility: hidden;
+  /* 淡出可见：visibility 推迟到 opacity 过渡结束再隐藏 */
+  transition: opacity 0.45s ease, visibility 0s linear 0.45s;
+}
+
 /* 右键菜单 */
 .pet-context-menu {
   position: fixed;
