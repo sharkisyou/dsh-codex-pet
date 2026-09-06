@@ -1075,7 +1075,10 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     const parts = rgb.match(/\d+/g)
     if (!parts || parts.length < 3) return
     const hex = `#${parts.slice(0, 3).map((c) => Number(c).toString(16).padStart(2, '0')).join('')}`
-    void getCurrentWebviewWindow().setBackgroundColor(hex).catch(() => { /* 能力不可用时忽略 */ })
+    void getCurrentWebviewWindow().setBackgroundColor(hex).catch((error) => {
+      // 权限缺失（capabilities 未放行 set-background-color）时这里能看见告警。
+      console.warn('[desktop-pet] 设置窗口原生背景色失败:', error)
+    })
   }
 
   systemDarkQuery.addEventListener('change', () => applyTheme())
