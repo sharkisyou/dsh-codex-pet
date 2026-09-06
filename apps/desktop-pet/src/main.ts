@@ -1,6 +1,6 @@
 import './style.css'
 import { detectWindowKind } from './window-kind.js'
-import { createDomPetRenderer } from './dom-pet-renderer.js'
+import { CELL_HEIGHT, CELL_WIDTH, createDomPetRenderer } from './dom-pet-renderer.js'
 import { mountPetShell, type PetShell } from './pet-shell.js'
 import { createUiClient, type UiClient } from './ui-client.js'
 import { mountSettingsApp } from './settings-app.js'
@@ -85,8 +85,51 @@ if (kind === 'pet') {
     let lastActivityState = 'idle'
     /** 待机形态状态：精灵未加载时显示剪影；断连时角标亮起（已加载宠物的断连保留宠物）。 */
     const standbyEl = document.querySelector<HTMLElement>('#pet-standby')
+    const standbySilhouette = standbyEl?.querySelector<HTMLElement>('.pet-standby-silhouette')
+    const STANDBY_SILHOUETTE_KEY = 'pet-standby-silhouette'
     let petHasSprite = false
     let wsConnected = false
+
+    // 恢复上次缓存的剪影（当前宠物的形状）；从未成功加载过则用 CSS 兜底猫形。
+    try {
+      const cachedSilhouette = localStorage.getItem(STANDBY_SILHOUETTE_KEY)
+      if (standbySilhouette && cachedSilhouette) {
+        standbySilhouette.style.backgroundImage = `url("${cachedSilhouette}")`
+      }
+    } catch {
+      // localStorage 不可用时静默走兜底剪影
+    }
+
+    /** 从精灵图首帧提取单色剪影缓存到 localStorage，供下次启动的待机形态使用。 */
+    function cacheStandbySilhouette(spriteDataUrl: string): void {
+      const img = new Image()
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas')
+          canvas.width = CELL_WIDTH
+          canvas.height = CELL_HEIGHT
+          const ctx = canvas.getContext('2d', { willReadFrequently: true })
+          if (!ctx) return
+          ctx.drawImage(img, 0, 0, CELL_WIDTH, CELL_HEIGHT, 0, 0, CELL_WIDTH, CELL_HEIGHT)
+          const frame = ctx.getImageData(0, 0, CELL_WIDTH, CELL_HEIGHT)
+          const px = frame.data
+          for (let i = 0; i < px.length; i += 4) {
+            if (px[i + 3] === 0) continue
+            px[i] = 148 // #94a3b8 灰蓝，与 CSS 兜底剪影同色；保留原 alpha 让边缘平滑
+            px[i + 1] = 163
+            px[i + 2] = 184
+          }
+          ctx.putImageData(frame, 0, 0)
+          localStorage.setItem(STANDBY_SILHOUETTE_KEY, canvas.toDataURL('image/png'))
+          if (standbySilhouette) {
+            standbySilhouette.style.backgroundImage = `url("${canvas.toDataURL('image/png')}")`
+          }
+        } catch {
+          // 剪影缓存失败不影响宠物显示
+        }
+      }
+      img.src = spriteDataUrl
+    }
 
     function syncPetStandby(): void {
       if (!standbyEl) return
@@ -392,6 +435,7 @@ if (kind === 'pet') {
             renderer.setPet(pet as ParsedPet)
             renderer.setSprite(spriteDataUrl)
             petHasSprite = Boolean(spriteDataUrl)
+            if (spriteDataUrl) cacheStandbySilhouette(spriteDataUrl)
             syncPetStandby()
           }
         },

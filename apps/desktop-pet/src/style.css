@@ -96,7 +96,7 @@ input {
   cursor: grab;
   touch-action: none;
   -webkit-user-drag: none;
-  transition: transform 160ms ease, filter 160ms ease;
+  transition: transform 160ms ease, filter 160ms ease, opacity 0.45s ease;
   transform: translateX(-50%);
 }
 
@@ -105,32 +105,17 @@ input {
   transform: translateX(-50%) translateY(1px);
 }
 
-/* 未加载占位框（CodexPetDesk .pet:not(.is-loaded)） */
+/* 未加载：不显示占位框（待机形态由 .pet-standby 承担）。规则放在基础层
+   （不依赖 JS 添加的 body 类），首帧即透明——否则首帧会先画出绿粉占位框、
+   等 body.pet-window 类加上后再触发过渡淡出，造成启动瞬间闪现。 */
 .pet:not(.is-loaded) {
   width: 192px;
   height: 208px;
-  border: 2px dashed rgb(255 255 255 / 0.46);
-  border-radius: 8px;
-  background:
-    linear-gradient(135deg, rgb(230 84 90 / 0.62), rgb(40 156 131 / 0.62)),
-    repeating-linear-gradient(
-      45deg,
-      rgb(255 255 255 / 0.15) 0 8px,
-      transparent 8px 16px
-    );
-  filter: none;
-}
-
-/* 宠物窗：未加载不显示占位框（改用 .pet-standby 待机形态），
-   精灵就绪后随 opacity 淡入，切换宠物时淡出淡入。 */
-body.pet-window .pet {
-  transition: opacity 0.45s ease;
-}
-body.pet-window .pet:not(.is-loaded) {
   opacity: 0;
   visibility: hidden;
   /* 淡出可见：visibility 推迟到 opacity 过渡结束再隐藏 */
   transition: opacity 0.45s ease, visibility 0s linear 0.45s;
+  filter: none;
 }
 
 /* 待机形态：宠物剪影 + 未连接角标（观感复用活动角标气泡）。
