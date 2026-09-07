@@ -90,7 +90,7 @@ if (kind === 'pet') {
     let petHasSprite = false
     let wsConnected = false
 
-    // 恢复上次缓存的剪影（当前宠物的形状）；从未成功加载过则用 CSS 兜底猫形。
+    // 恢复上次缓存的剪影（当前宠物的形状）；从未成功加载过则用内置的 Dimo 兜底剪影。
     try {
       const cachedSilhouette = localStorage.getItem(STANDBY_SILHOUETTE_KEY)
       if (standbySilhouette && cachedSilhouette) {
@@ -115,7 +115,7 @@ if (kind === 'pet') {
           const px = frame.data
           for (let i = 0; i < px.length; i += 4) {
             if (px[i + 3] === 0) continue
-            px[i] = 148 // #94a3b8 灰蓝，与 CSS 兜底剪影同色；保留原 alpha 让边缘平滑
+            px[i] = 148 // #94a3b8 灰蓝，与内置 Dimo 兜底剪影同色；保留原 alpha 让边缘平滑
             px[i + 1] = 163
             px[i + 2] = 184
           }
