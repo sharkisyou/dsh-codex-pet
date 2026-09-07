@@ -294,6 +294,25 @@ if (kind === 'pet') {
     let pointerDownAt: { x: number; y: number } | null = null
     let dragStarted = false
     const DRAG_THRESHOLD_PX = 5
+    // 手动拖动：锚定按下时的窗口物理坐标与光标屏幕坐标（CSS px），
+    // move 时按增量 setPosition。不用 startDragging()——原生标题栏拖动循环
+    // 会触发 Aero Shake（快速来回甩动宠物 → Windows 最小化其他所有窗口，
+    // 2026-09-07 实测浏览器被最小化）与边缘贴靠/顶部最大化，对桌宠都不适用。
+    // 注：跨不同 DPI 显示器拖动时增量换算会有轻微漂移，松手重抓即恢复。
+    let dragAnchor: { winX: number; winY: number; screenX: number; screenY: number } | null = null
+    let dragLatest: { screenX: number; screenY: number } | null = null
+    let dragFramePending = false
+
+    function applyDragFrame(): void {
+      dragFramePending = false
+      if (!dragStarted || dragAnchor === null || dragLatest === null) return
+      const win = currentTauriWindow()
+      if (!win) return
+      const dpr = window.devicePixelRatio || 1
+      const x = Math.round(dragAnchor.winX + (dragLatest.screenX - dragAnchor.screenX) * dpr)
+      const y = Math.round(dragAnchor.winY + (dragLatest.screenY - dragAnchor.screenY) * dpr)
+      void win.setPosition(new PhysicalPosition(x, y)).catch(() => { /* 拖动跟随失败静默 */ })
+    }
 
     if (stage) {
       stage.addEventListener('pointerdown', (event) => {
@@ -301,37 +320,62 @@ if (kind === 'pet') {
         pressOnPet = event.target === petEl
         pointerDownAt = { x: event.clientX, y: event.clientY }
         dragStarted = false
+        dragAnchor = null
+        dragLatest = null
+        const win = currentTauriWindow()
+        if (win) {
+          void win.outerPosition()
+            .then((pos) => {
+              // 按下尚未结束且未开始拖动时锚定窗口位置
+              if (pointerDownAt !== null && !dragStarted) {
+                dragAnchor = { winX: pos.x, winY: pos.y, screenX: event.screenX, screenY: event.screenY }
+              }
+            })
+            .catch(() => { /* 取不到窗口位置则本次放弃拖动 */ })
+        }
         if (typeof stage.setPointerCapture === 'function') {
           try { stage.setPointerCapture(event.pointerId) } catch { /* ignore */ }
         }
       })
       stage.addEventListener('pointermove', (event) => {
-        if (pointerDownAt === null || dragStarted) return
-        const dx = event.clientX - pointerDownAt.x
-        const dy = event.clientY - pointerDownAt.y
-        if (Math.hypot(dx, dy) >= DRAG_THRESHOLD_PX) {
-          dragStarted = true
-          const win = currentTauriWindow()
-          if (win) {
-            void win.startDragging().catch(() => { /* browser dev / unsupported */ })
+        if (pointerDownAt === null) return
+        if (!dragStarted) {
+          if (dragAnchor === null) return // 窗口位置锚点未就绪，先不判定
+          const dx = event.clientX - pointerDownAt.x
+          const dy = event.clientY - pointerDownAt.y
+          if (Math.hypot(dx, dy) >= DRAG_THRESHOLD_PX) {
+            dragStarted = true
+          } else {
+            return
           }
         }
+        dragLatest = { screenX: event.screenX, screenY: event.screenY }
+        if (!dragFramePending) {
+          dragFramePending = true
+          requestAnimationFrame(applyDragFrame)
+        }
       })
-      stage.addEventListener('pointerup', () => {
+      const endDrag = (): void => {
         const shouldClick = !dragStarted && pressOnPet
         pointerDownAt = null
         dragStarted = false
         pressOnPet = false
+        dragAnchor = null
+        dragLatest = null
         if (shouldClick) {
           // 点击一次播放下一个动作：优先宠物包声明的点击技能，
           // 未声明时轮播全部动作（idle/running/waving/jumping/...）。
           renderer.playNextAnimation()
         }
-      })
+      }
+      stage.addEventListener('pointerup', endDrag)
       stage.addEventListener('pointercancel', () => {
+        // 仅重置状态，不触发点击动作（保持原行为）
         pointerDownAt = null
         dragStarted = false
         pressOnPet = false
+        dragAnchor = null
+        dragLatest = null
       })
     }
 
