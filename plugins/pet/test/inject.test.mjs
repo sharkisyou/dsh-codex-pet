@@ -3,6 +3,9 @@ import assert from 'node:assert/strict'
 
 import { createBridge } from '../lib/index.mjs'
 
+// 测试环境关闭文件日志：避免把测试噪音写进真实的 ~/.dsh/logs/pet-bridge.log
+process.env.DSH_PET_LOG ||= '0'
+
 // Mimics cordis 的严格属性访问：未在 inject 里声明的服务式读取直接抛错。
 const RESERVED_WORDS = ['prototype', 'then']
 

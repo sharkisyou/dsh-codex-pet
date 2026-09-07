@@ -3,6 +3,9 @@ import assert from 'node:assert/strict'
 
 import { apply, createBridge, BRIDGE_AGENT } from '../lib/index.mjs'
 
+// 测试环境关闭文件日志：避免把测试噪音写进真实的 ~/.dsh/logs/pet-bridge.log
+process.env.DSH_PET_LOG ||= '0'
+
 class FakeWebSocket {
   static instances = []
   static sent = []

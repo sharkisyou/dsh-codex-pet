@@ -6,6 +6,9 @@ import vm from 'node:vm'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
+// 测试环境关闭文件日志：避免把测试噪音写进真实的 ~/.dsh/logs/pet-bridge.log
+process.env.DSH_PET_LOG ||= '0'
+
 // 浏览器客户端（lib/client.js）是一个 `window.__ModuleLoader__.load(...)`
 // 脚本，不是普通 ESM/CJS 模块。这里用 vm 模拟 ModuleLoader 加载它，并验证：
 // - inject 声明包含 remote + sessions（session/open 导航所需）

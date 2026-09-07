@@ -8,6 +8,7 @@ DSH 桌宠系统的**桥接插件**：作为 WebSocket 客户端连接桌宠服�
 
 - WebSocket 客户端连接桌宠，默认 `ws://127.0.0.1:3720/v1`，可用 `DSH_PET_URL` 覆盖。
 - 连接失败自动重试，断线后自动重连；重连成功后重新发送握手与当前会话快照。
+- 关键事件日志落盘 `~/.dsh/logs/pet-bridge.log`（时间戳行、2MB 轮转留一份 `.old`）：`DSH_PET_LOG=</path/to.log>` 指定路径、`DSH_PET_LOG=0` 关闭；宿主控制台输出保持不变。
 - DSH 事件 → 线协议事件翻译：
   - `agent/status` → `session/status`
   - `agent/error` → `session/error`

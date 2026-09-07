@@ -5,6 +5,9 @@ import { fileURLToPath } from 'node:url'
 
 import { apply, createBridge } from '../lib/index.mjs'
 
+// 测试环境关闭文件日志：避免把测试噪音写进真实的 ~/.dsh/logs/pet-bridge.log
+process.env.DSH_PET_LOG ||= '0'
+
 const packageJson = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'))
 
 class FakeWebSocket {

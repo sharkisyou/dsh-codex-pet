@@ -1,4 +1,7 @@
 import { createRequire } from 'node:module'
+import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 
 import {
   DEFAULT_PORT,
@@ -16,6 +19,80 @@ export const inject = ['webServer']
 export const BRIDGE_AGENT = 'dsh'
 export const DEFAULT_RECONNECT_MS = 1000
 export const MAX_RECONNECT_MS = 30000
+
+const LOG_MAX_BYTES = 2 * 1024 * 1024
+const LOG_ROTATE_CHECK_MS = 60_000
+const LOG_LINE_MAX = 2000
+
+/** 安全序列化日志附加参数：Error 取 stack 前几行（压成单行）、ErrorEvent 取 type/message、普通对象 JSON。 */
+export function formatLogArg(value) {
+  if (typeof value === 'string') return value
+  if (value instanceof Error) {
+    const stack = typeof value.stack === 'string' && value.stack !== ''
+      ? value.stack.split('\n').slice(0, 4).join(' | ')
+      : ''
+    return stack || `${value.name}: ${value.message}`
+  }
+  if (value !== null && typeof value === 'object') {
+    // ErrorEvent/Event 形状的对象：JSON.stringify 会丢 message/error 字段
+    const eventLike = (typeof value.type === 'string' && typeof value.message === 'string') || value.error instanceof Error
+    if (eventLike) {
+      const inner = value.error instanceof Error ? `, error=${formatLogArg(value.error)}` : ''
+      const name = value.constructor?.name ?? 'Event'
+      return `${name}(type=${value.type ?? ''}${value.message ? `, message=${value.message}` : ''}${inner})`
+    }
+    try { return JSON.stringify(value) } catch { return Object.prototype.toString.call(value) }
+  }
+  return String(value)
+}
+
+/** lastError 用紧凑格式（不带多行 stack），避免 /pet/bridge/status 响应难读。 */
+function errorText(value) {
+  if (value instanceof Error) return `${value.name}: ${value.message}`
+  return formatLogArg(value)
+}
+
+/**
+ * 桥接文件日志：把 log() 输出 tee 到磁盘。宿主控制台日志随终端滚动消失，
+ * 排障需要可回溯的落盘记录（connected/disconnected/websocket error 等关键事件）。
+ * 串行追加、超限轮转（保留一份 .old）、任何失败静默——日志绝不影响桥接本身。
+ */
+export function createFileLog(path, { maxBytes = LOG_MAX_BYTES, rotateCheckMs = LOG_ROTATE_CHECK_MS } = {}) {
+  if (typeof path !== 'string' || path === '') return null
+  let queue = Promise.resolve()
+  let lastRotateCheck = 0
+  const append = (line) => {
+    queue = queue.then(async () => {
+      try {
+        await mkdir(dirname(path), { recursive: true })
+        const now = Date.now()
+        if (now - lastRotateCheck >= rotateCheckMs) {
+          lastRotateCheck = now
+          try {
+            const info = await stat(path)
+            if (info.size >= maxBytes) await rename(path, `${path}.old`)
+          } catch { /* 文件尚不存在，属首写 */ }
+        }
+        await appendFile(path, `${line}\n`)
+      } catch { /* 日志失败绝不影响桥接 */ }
+    })
+  }
+  return { append, path, flush: () => queue }
+}
+
+/**
+ * 解析日志文件路径。优先级：options.logFile（null/false 显式关闭、字符串为路径）
+ * → env DSH_PET_LOG（'0'/'false'/'' 关闭、'1'/'true' 或缺省用默认路径、其他字符串为路径）。
+ * 默认路径 ~/.dsh/logs/pet-bridge.log。
+ */
+export function resolveLogFile(optionsValue) {
+  if (optionsValue === null || optionsValue === false) return null
+  if (typeof optionsValue === 'string' && optionsValue !== '') return optionsValue
+  const env = process.env.DSH_PET_LOG
+  if (env === '0' || env === 'false' || env === '') return null
+  if (env !== undefined && env !== '1' && env !== 'true') return env
+  return join(homedir(), '.dsh', 'logs', 'pet-bridge.log')
+}
 
 function safeString(value, fallback = '') {
   if (typeof value === 'string' && value !== '') return value
@@ -318,7 +395,10 @@ export function createBridge(ctx, options = {}) {
   const maxReconnectDelay = Number(options.maxReconnectDelay ?? MAX_RECONNECT_MS)
   // Session directory/title refresh cadence for async session stores (rc.1+).
   const refreshMs = Math.max(1000, Number(options.refreshMs ?? process.env.DSH_PET_REFRESH_MS ?? 4000))
+  const fileLog = createFileLog(resolveLogFile(options.logFile))
   const log = (msg, ...args) => {
+    const detail = args.length ? ` ${args.map(formatLogArg).join(' ')}` : ''
+    if (fileLog) fileLog.append(`[${new Date().toISOString()}] [pet-bridge] ${msg}${detail}`.slice(0, LOG_LINE_MAX))
     if (logger && typeof logger.info === 'function') logger.info(`[pet-bridge] ${msg}`, ...args)
   }
 
@@ -750,7 +830,7 @@ export function createBridge(ctx, options = {}) {
     }
 
     socket.onerror = (error) => {
-      lastError = error instanceof Error ? error.message : String(error ?? 'websocket error')
+      lastError = errorText(error).slice(0, 300)
       log('websocket error', error)
       if (!connected) {
         const old = socket
@@ -789,6 +869,7 @@ export function createBridge(ctx, options = {}) {
     lastError = null
     started = true
     stopped = false
+    log('bridge starting', { url, agent, logFile: fileLog?.path ?? null })
     refreshSessions()
     startPullTimer()
     void pullAndPushIfChanged()
