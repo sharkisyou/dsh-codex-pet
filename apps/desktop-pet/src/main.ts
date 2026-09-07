@@ -142,7 +142,7 @@ if (kind === 'pet') {
       }
     }
 
-    /* ---------- 桌宠外壳交互（气泡 / 悬停 / 缩放 / 移动动画 / 右键菜单） ---------- */
+    /* ---------- 桌宠外壳交互（气泡 / 缩放 / 移动动画 / 右键菜单） ---------- */
 
     async function openSettingsWindow(): Promise<void> {
       if (!isTauri()) {
@@ -288,9 +288,8 @@ if (kind === 'pet') {
       }
     }
 
-    /* ---------- 窗口拖动 + 点击技能 ---------- */
+    /* ---------- 窗口拖动 ---------- */
 
-    let pressOnPet = false
     let pointerDownAt: { x: number; y: number } | null = null
     let dragStarted = false
     const DRAG_THRESHOLD_PX = 5
@@ -317,7 +316,6 @@ if (kind === 'pet') {
     if (stage) {
       stage.addEventListener('pointerdown', (event) => {
         if (event.button !== 0) return
-        pressOnPet = event.target === petEl
         pointerDownAt = { x: event.clientX, y: event.clientY }
         dragStarted = false
         dragAnchor = null
@@ -355,28 +353,14 @@ if (kind === 'pet') {
           requestAnimationFrame(applyDragFrame)
         }
       })
-      const endDrag = (): void => {
-        const shouldClick = !dragStarted && pressOnPet
+      const resetDrag = (): void => {
         pointerDownAt = null
         dragStarted = false
-        pressOnPet = false
         dragAnchor = null
         dragLatest = null
-        if (shouldClick) {
-          // 点击一次播放下一个动作：优先宠物包声明的点击技能，
-          // 未声明时轮播全部动作（idle/running/waving/jumping/...）。
-          renderer.playNextAnimation()
-        }
       }
-      stage.addEventListener('pointerup', endDrag)
-      stage.addEventListener('pointercancel', () => {
-        // 仅重置状态，不触发点击动作（保持原行为）
-        pointerDownAt = null
-        dragStarted = false
-        pressOnPet = false
-        dragAnchor = null
-        dragLatest = null
-      })
+      stage.addEventListener('pointerup', resetDrag)
+      stage.addEventListener('pointercancel', resetDrag)
     }
 
     /* ---------- 缩放 ---------- */

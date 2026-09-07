@@ -1,7 +1,7 @@
 /**
  * 桌宠窗口外壳交互（迁移自 CodexPetDesk src/main.js 的界面部分，重写为 TS）。
  *
- * 只负责桌宠窗口的“壳”：DOM 说话气泡、悬停跳跃、Ctrl+滚轮/双指缩放、
+ * 只负责桌宠窗口的“壳”：DOM 说话气泡、Ctrl+滚轮/双指缩放、
  * 窗口拖动时的跑动动画、右键菜单。精灵帧动画仍由 Canvas renderer 承担，
  * 因此本模块不复制任何渲染逻辑。
  */
@@ -33,7 +33,7 @@ export interface SpeechBubbleOptions {
 }
 
 export interface PetShellOptions {
-  /** 宠物元素（悬停与右键目标）。 */
+  /** 宠物元素（右键目标）。 */
   element: HTMLElement
   /** DOM 说话气泡元素。 */
   bubbleEl: HTMLElement
@@ -43,7 +43,7 @@ export interface PetShellOptions {
   getScale(): number
   /** 应用新缩放（宿主负责画布与窗口尺寸）。 */
   setScale(scale: number): void
-  /** 渲染器，用于悬停/移动时的动画状态切换。 */
+  /** 渲染器，用于拖动移动时的动画状态切换。 */
   renderer: Pick<PetRenderer, 'setState'>
   /** 右键菜单“设置”。 */
   onOpenSettings?: () => void
@@ -61,7 +61,6 @@ export interface PetShell {
   hideBubble(): void
   /** 通知横向位移（窗口被拖动），用于播放跑动动画。 */
   onWindowMoved(nextX: number): void
-  isHovered(): boolean
   dispose(): void
 }
 
@@ -83,7 +82,6 @@ export function mountPetShell(options: PetShellOptions): PetShell {
     onBubbleHide,
   } = options
 
-  let hovered = false
   let settleTimer: ReturnType<typeof setTimeout> | null = null
   let bubbleTimer: ReturnType<typeof setTimeout> | null = null
   let lastWindowX: number | null = null
@@ -101,7 +99,7 @@ export function mountPetShell(options: PetShellOptions): PetShell {
     settleTimer = setTimeout(() => {
       settleTimer = null
       lastWindowX = null
-      renderer.setState(hovered ? 'jumping' : 'idle')
+      renderer.setState('idle')
     }, MOVE_SETTLE_MS)
   }
 
@@ -135,7 +133,7 @@ export function mountPetShell(options: PetShellOptions): PetShell {
     bubbleEl.textContent = ''
     if (onBubbleHide) {
       onBubbleHide()
-    } else if (!hovered) {
+    } else {
       renderer.setState('idle')
     }
   }
@@ -215,16 +213,6 @@ export function mountPetShell(options: PetShellOptions): PetShell {
 
   /* ---------- 具名事件处理器（供 dispose 解绑） ---------- */
 
-  function onMouseEnter(): void {
-    hovered = true
-    if (!settleTimer) renderer.setState('jumping')
-  }
-
-  function onMouseLeave(): void {
-    hovered = false
-    if (!settleTimer) renderer.setState('idle')
-  }
-
   function onSettingsClick(): void {
     hideContextMenu()
     onOpenSettings?.()
@@ -237,8 +225,6 @@ export function mountPetShell(options: PetShellOptions): PetShell {
 
   /* ---------- 事件绑定 ---------- */
 
-  element.addEventListener('mouseenter', onMouseEnter)
-  element.addEventListener('mouseleave', onMouseLeave)
   element.addEventListener('contextmenu', onContextMenu)
   document.addEventListener('wheel', onWheel, { passive: false })
   document.addEventListener('touchstart', onTouchStart, { passive: false })
@@ -258,8 +244,6 @@ export function mountPetShell(options: PetShellOptions): PetShell {
       clearTimeout(bubbleTimer)
       bubbleTimer = null
     }
-    element.removeEventListener('mouseenter', onMouseEnter)
-    element.removeEventListener('mouseleave', onMouseLeave)
     element.removeEventListener('contextmenu', onContextMenu)
     document.removeEventListener('wheel', onWheel)
     document.removeEventListener('touchstart', onTouchStart)
@@ -275,7 +259,6 @@ export function mountPetShell(options: PetShellOptions): PetShell {
     showBubble,
     hideBubble,
     onWindowMoved,
-    isHovered: () => hovered,
     dispose,
   }
 }
