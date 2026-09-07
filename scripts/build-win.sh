@@ -43,8 +43,9 @@ sync_source() {
   echo "▶ 1/5 导出干净源码（git archive，排除 node_modules/target）..."
   git archive --format=tar HEAD | gzip > "$SRC_TAR"
   echo "   打包: $(du -h "$SRC_TAR" | cut -f1)"
-  local tar_base="$(basename "$SRC_TAR")"
-  ps "\$src = '\\\\wsl.localhost\\Ubuntu-24.04\\tmp\\$tar_base'
+  # wslpath 动态取本发行版 UNC 路径（勿硬编码发行版名，跨机器会挂）
+  local src_unc="$(wslpath -w "$SRC_TAR")"
+  ps "\$src = '$src_unc'
 \$dst = Join-Path \$env:USERPROFILE '$WIN_TAR'
 Copy-Item \$src \$dst -Force
 Write-Output ('   → ' + \$dst + ' (' + (Get-Item \$dst).Length + ' bytes)')"
