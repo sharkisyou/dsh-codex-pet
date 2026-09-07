@@ -47,7 +47,11 @@ Windows 侧一次性环境已装好（Node、Rust MSVC、VS2022、WebView2），
 ### 关键注意事项
 
 - **图标**：Windows 构建必须 `src-tauri/icons/icon.ico`（生成 Windows 资源文件）。缺失时 `build` 会自动用
-  `npx tauri icon src-tauri/icons/icon.png` 生成。WSL/Linux 构建不需要它。
+  `npx tauri icon src-tauri/icons/icon.png` 生成。WSL/Linux 构建不需要它。当前是 Twemoji 🐾 矢量渲染的
+  中调暖棕 `#A9714B`（深浅色模式均可读；256-48px 双爪、≤32px 单爪、托盘单爪）。
+- **改 icon.ico 不会自动重嵌**：tauri-build 只监听 `tauri.conf.json` 和 `capabilities`（实测 2026-09-07），
+  单改 ico 后重编译 exe 仍是旧图标。修法：`touch src-tauri/tauri.conf.json` 再 build，或
+  `cargo clean -p desktop-pet`。
 - **增量编译**：`extract` 会重建工作目录，因此日常改代码后用 `build`（复用 Windows 侧已有 target/node_modules）
   而非 `all`，可跳过 deps 直接增量编译。
 - **数据源**：Windows 桌宠通过 WSL2 `localhost` 转发连 `ws://127.0.0.1:3720`（pet server），**pet server 必须保持运行**，否则桌宠显示待机剪影形态。Vite（1420）只有 dev 模式构建（未开 custom-protocol）才需要——自包含构建不需要 Vite。
