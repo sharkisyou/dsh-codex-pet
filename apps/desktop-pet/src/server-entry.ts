@@ -14,7 +14,16 @@ import { createAppController } from './controller.js'
 import { createUiGateway, UI_PROTOCOL_PATH } from './ui-gateway.js'
 import { createMarket } from './market.js'
 import { ensureBridgePlugin } from './ensure-bridge-plugin.js'
+import { createFileLog, resolveServerLogFile, teeConsole } from './file-log.js'
 import { join } from 'node:path'
+
+// 日志落盘：console 输出 tee 到 ~/.dsh/logs/pet-server.log（PET_SERVER_LOG 可指定路径/关闭），
+// 不再依赖启动方式是否重定向 stdout；与桥接插件的 pet-bridge.log 同目录，便于对照排障。
+const serverFileLog = createFileLog(resolveServerLogFile())
+if (serverFileLog) {
+  teeConsole(serverFileLog)
+  console.log(`[desktop-pet] file log: ${serverFileLog.path}`)
+}
 
 const library = createPetLibrary()
 const store = createSettingsStore()

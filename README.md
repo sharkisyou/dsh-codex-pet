@@ -57,6 +57,8 @@ npm run tauri dev  # 启动 Tauri 桌面外壳（Windows 下见下方构建说�
 npm test
 ```
 
+pet server 与桥接插件的关键事件日志均落盘 `~/.dsh/logs/`（`pet-server.log` / `pet-bridge.log`，2MB 自动轮转），排障可对照查看全链路时间线；`PET_SERVER_LOG` / `DSH_PET_LOG` 可指定路径或设 `0` 关闭。
+
 ## Windows 构建（WSL → Windows）
 
 > 实测：WSL 交叉编译到 MSVC target 不可行（缺 link.exe）；MinGW 交叉编译可行（备选路）。日常主力是 WSL 通过 interop 调用 Windows 原生 Rust 工具链，已封装为 `scripts/build-win.sh`。前置条件与完整注意事项（图标、增量编译、localhost relay、调试捕获、MinGW 配方）见 [AGENTS.md](AGENTS.md)。
