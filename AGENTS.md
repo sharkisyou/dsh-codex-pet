@@ -14,35 +14,38 @@
 
 ## Windows 桌面宠物构建（WSL → Windows）
 
-> 实测验证（2026-08-30，MinGW 交叉编译 2026-09-07 补测）。目标：在 Windows 上原生运行 `apps/desktop-pet`（Tauri 2 桌宠）。
-> 结论：**日常主力是 WSL 通过 interop 调用 Windows 原生 Rust 工具链编译**（已验证成功：透明窗口 + 完整宠物 + 正常运行）。
-> 交叉编译方面：MSVC target 不可行（WSL 无 link.exe + Windows SDK）；**MinGW 交叉编译实测可行**（见下方关键注意事项），定位为备选路。
+> 实测验证（2026-08-30 首测；2026-09-07 起 MinGW 交叉编译为本机日常主力）。目标：在 Windows 上原生运行 `apps/desktop-pet`（Tauri 2 桌宠）。
+> **结论：日常主力是 WSL 内 MinGW 交叉编译**（`--features tauri/custom-protocol` 自包含构建，验证通过：透明窗口 + 完整宠物 + 正常运行）。
+> 原 interop 脚本路线（scripts/build-win.sh，调 Windows 原生 Rust 工具链）已于 2026-09-08 删除：本机 Windows 侧无
+> Rust/VS2022 工具链，且该链路环节多、历史坑多；MSVC target 不可行（WSL 无 link.exe + Windows SDK）；
+> 安装器打包（NSIS/WiX）出现需求时走 CI（windows-latest）或临时装 Windows 工具链跑 `tauri build`。
 
 ### 前置条件
 
-Windows 侧一次性环境已装好（Node、Rust MSVC、VS2022、WebView2），**勿重装**；装 Rust 勿用 winget（源不可用），用 rustup-init.exe。
+- **WSL 侧（构建机）**：node/npm（nvm）、rustup（`rustup target add x86_64-pc-windows-gnu`）、
+  `sudo apt install mingw-w64`；仓库内未跟踪文件 `apps/desktop-pet/src-tauri/.cargo/config.toml`
+  指定 gnu 目标链接器（本机已配好，换机器需重建该文件）。
+- **Windows 侧（运行机）**：仅需 WebView2 运行时；没有 Rust/VS2022 完全不影响构建。
 
-### 构建（封装脚本）
-
-> 已封装为 `scripts/build-win.sh`，在 WSL 仓库根目录执行。
+### 构建与部署（直接命令）
 
 ```bash
-./scripts/build-win.sh sync          # 导出干净源码到 Windows（git archive）
-./scripts/build-win.sh extract       # 导出 + Windows 解压
-./scripts/build-win.sh deps          # 解压 + 首次装依赖/构建 TS 包
-./scripts/build-win.sh build         # 构建前端 + 编译 debug exe（增量复用 target）
-./scripts/build-win.sh build-release # 构建前端 + 编译 release exe（增量复用 target/release）
-./scripts/build-win.sh run           # 启动 debug 版桌宠
-./scripts/build-win.sh run-release   # 启动 release 版桌宠
-./scripts/build-win.sh all           # 全流程 debug（默认）：sync→extract→deps→build→run
-./scripts/build-win.sh release       # 全流程 release：sync→extract→deps→build→run
+cd apps/desktop-pet
+npx vite build                                                    # ① 前端 → dist（必须先于 cargo，见下）
+cd src-tauri
+cargo build --release --target x86_64-pc-windows-gnu \
+  --features tauri/custom-protocol -j 8                           # ② 自包含 release exe
+cp target/x86_64-pc-windows-gnu/release/desktop-pet.exe \
+   target/x86_64-pc-windows-gnu/release/WebView2Loader.dll \
+   /mnt/c/Users/<user>/desktop-pet/                               # ③ 部署：exe+dll 必须成对同目录
 ```
 
-日常迭代（改代码后出 Windows 版）用 `all` 一键完成，全量编译约 2 分钟、增量约 7s。
-日常自用/出正式包用 `release`：release 是 windows 子系统（**不创建终端窗口、无 Rust
-日志**），性能更好；首次 release 全量编译 2-3 分钟，之后复用 `target/release` 增量。
-排障时用 debug 版（有控制台日志；WebView2 调试端口须用 tauri.conf.json 的 `additionalBrowserArgs`，
-`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 环境变量会被 wry 显式传参覆盖而失效）。
+- **改前端后必须重跑 ①**：tauri-build 的 rerun-if-changed 只含 `tauri.conf.json` 与 `capabilities`，
+  不追踪 dist；重编译时 proc-macro 才重嵌 dist。若 cargo 显示 fresh 而 dist 已变，`touch src/main.rs` 强制。
+- 全量编译约 20-30s；`-j 8` 是 7.6G 内存机器的经验值（16 核全开可能 OOM）。
+- release 为 windows 子系统（无终端窗口、无 Rust 日志）；排障时可构建 debug 版（console 子系统带日志；
+  WebView2 调试端口须用 tauri.conf.json 的 `additionalBrowserArgs`，
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 环境变量会被 wry 显式传参覆盖而失效）。
 
 ### 关键注意事项
 
@@ -52,8 +55,6 @@ Windows 侧一次性环境已装好（Node、Rust MSVC、VS2022、WebView2），
 - **改 icon.ico 不会自动重嵌**：tauri-build 只监听 `tauri.conf.json` 和 `capabilities`（实测 2026-09-07），
   单改 ico 后重编译 exe 仍是旧图标。修法：`touch src-tauri/tauri.conf.json` 再 build，或
   `cargo clean -p desktop-pet`。
-- **增量编译**：`extract` 会重建工作目录，因此日常改代码后用 `build`（复用 Windows 侧已有 target/node_modules）
-  而非 `all`，可跳过 deps 直接增量编译。
 - **数据源**：Windows 桌宠通过 WSL2 `localhost` 转发连 `ws://127.0.0.1:3720`（pet server），**pet server 必须保持运行**，否则桌宠显示待机剪影形态。Vite（1420）只有 dev 模式构建（未开 custom-protocol）才需要——自包含构建不需要 Vite。
   - **连不连得到与 `PET_SERVER_HOST` 无关**：现代 WSL2（.wslconfig 含 dnsTunneling/autoProxy，
     内核 6.18+）的 localhost relay 会把 Windows 的 `127.0.0.1:3720` 直接桥接到 WSL 回环监听——
@@ -66,11 +67,9 @@ Windows 侧一次性环境已装好（Node、Rust MSVC、VS2022、WebView2），
   `~/.dsh/skills/opencode-vision/glm-vision.py "<提示词>" <截图路径>`（GLM 5.3 flash）。
   运行日志三处对照：桥接 `~/.dsh/logs/pet-bridge.log`、pet server `~/.dsh/logs/pet-server.log`、
   前端 UI 事件 `%USERPROFILE%\dsh-pet.log`（petLog 落盘）。
-- **MinGW 交叉编译实测可行（2026-09-07，备选路）**：WSL 可直接把 src-tauri 编成 Windows exe（debug 冷编译
-  1m37s，实测正常运行、图标已嵌入；release 亦验证）。一次性准备：`sudo apt install mingw-w64` +
-  `rustup target add x86_64-pc-windows-gnu`；`apps/desktop-pet/src-tauri/.cargo/config.toml`（未跟踪，不进
-  git archive）指定 `[target.x86_64-pc-windows-gnu] linker = "x86_64-w64-mingw32-gcc"`，然后
-  `cargo build --target x86_64-pc-windows-gnu --features tauri/custom-protocol [--release]`（需 `apps/desktop-pet/dist` 已存在）。
+- **MinGW 交叉编译（2026-09-07 起主力，配方见上方构建与部署）**：WSL 直接把 src-tauri 编成 Windows exe，
+  实测正常运行、图标嵌入、自包含（custom-protocol）。一次性准备：`sudo apt install mingw-w64` +
+  `rustup target add x86_64-pc-windows-gnu` + `.cargo/config.toml` 链接器配置（见前置条件）。
   **必须带 `--features tauri/custom-protocol`**：不开该 feature 时即使 release 也走 `devUrl`
   （http://localhost:1420），产物并非自包含——旧配方"能跑"纯粹因为当时 Vite 恰好在跑（2026-09-07
   实测踩坑：杀 Vite 后所有重启实例窗口空白零连接，CDP `/json/list` 显示页面在加载 localhost:1420）。

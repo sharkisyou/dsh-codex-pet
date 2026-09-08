@@ -18,7 +18,7 @@ DeepSeek Harness 宠物插件仓库，实现**桌宠（Desktop Pet）双部件�
 ├── packages/pet-core/         # 桌宠纯逻辑：state-machine / multi-session 等 TS 版
 ├── plugins/pet/               # DSH 桥接插件（发布为 @yshark/dsh-codex-pet）
 ├── tools/intro-video/         # Remotion 介绍视频工程
-├── scripts/                   # build-win.sh（Windows 构建）、simulate-pet-states.mjs
+├── scripts/                   # simulate-pet-states.mjs 等辅助脚本
 ├── docs/adr/                  # 系统级架构与协议决策
 ├── docs/agents/               # Agent 技能说明
 └── .scratch/                  # 本地 issue 与规格
@@ -61,19 +61,20 @@ pet server 与桥接插件的关键事件日志均落盘 `~/.dsh/logs/`（`pet-s
 
 ## Windows 构建（WSL → Windows）
 
-> 实测：WSL 交叉编译到 MSVC target 不可行（缺 link.exe）；MinGW 交叉编译可行（备选路）。日常主力是 WSL 通过 interop 调用 Windows 原生 Rust 工具链，已封装为 `scripts/build-win.sh`。前置条件与完整注意事项（图标、增量编译、localhost relay、调试捕获、MinGW 配方）见 [AGENTS.md](AGENTS.md)。
+> 日常主力：WSL 内 MinGW 交叉编译（自包含构建，无终端窗口的正式形态）。MSVC target 不可行（缺 link.exe）；安装器打包（NSIS/WiX）出现需求时走 CI（windows-latest）。前置条件、数据源、调试捕获与完整配方见 [AGENTS.md](AGENTS.md)。
 
 ```sh
-./scripts/build-win.sh all           # 全流程 debug：sync→extract→deps→build→run（日常改代码用）
-./scripts/build-win.sh release       # 全流程 release：无终端窗口的正式形态
-./scripts/build-win.sh build         # 只构建前端 + 编译 debug exe（增量复用已有 target）
-./scripts/build-win.sh build-release # 只出 release exe（增量复用 target/release）
-./scripts/build-win.sh run           # 启动 debug 版桌宠（有控制台日志，排障用）
-./scripts/build-win.sh run-release   # 启动 release 版桌宠
+cd apps/desktop-pet
+npx vite build                                # ① 前端 → dist（改前端后必须重跑）
+cd src-tauri
+cargo build --release --target x86_64-pc-windows-gnu \
+  --features tauri/custom-protocol -j 8       # ② 自包含 release exe
+cp target/x86_64-pc-windows-gnu/release/{desktop-pet.exe,WebView2Loader.dll} \
+   /mnt/c/Users/<user>/desktop-pet/           # ③ exe+dll 成对部署到同一目录
 ```
 
-- 全量编译约 2 分钟，增量约 7 秒；release 首次 2-3 分钟。
-- 数据源：桌宠通过 WSL2 localhost relay 连 WSL 里的 Vite（1420）与 pet server（3720），两者需保持运行，否则窗口空白。
+- 全量编译约 20-30 秒（增量更快）；**必须带 `--features tauri/custom-protocol`**，否则 release 也走 devUrl、窗口空白。
+- 数据源：桌宠通过 WSL2 localhost relay 连 WSL 里的 pet server（3720），需保持运行，否则桌宠显示待机剪影形态。
 
 ## Linux 桌面（基本形态）
 
