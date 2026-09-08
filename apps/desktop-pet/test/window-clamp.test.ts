@@ -12,33 +12,32 @@ test('soft clamp keeps position when sprite is fully on screen', () => {
   assert.deepEqual(clampSpriteMinVisible(100, 100, BOX, [MONITOR]), { x: 100, y: 100 })
 })
 
-test('soft clamp pulls sprite back to a 32px strip at the right edge', () => {
-  // bbox 左缘 = 1880+20 = 1900，仅 20px 可见
-  assert.deepEqual(clampSpriteMinVisible(1880, 100, BOX, [MONITOR]), { x: 1868, y: 100 })
-  // bbox 完全拖出右缘也要拉回同一条
-  assert.deepEqual(clampSpriteMinVisible(2000, 100, BOX, [MONITOR]), { x: 1868, y: 100 })
+test('soft clamp allows at most half the sprite out of the right edge', () => {
+  // 默认 ratio=0.5：允许出屏 200/2=100px。bbox 左缘上限 = 1920-100 = 1820 → x ≤ 1800
+  assert.deepEqual(clampSpriteMinVisible(1850, 100, BOX, [MONITOR]), { x: 1800, y: 100 })
+  // 完全拖出右缘也拉回同一位置
+  assert.deepEqual(clampSpriteMinVisible(2000, 100, BOX, [MONITOR]), { x: 1800, y: 100 })
+  // 恰好一半出屏是合法贴边状态，不钳
+  assert.deepEqual(clampSpriteMinVisible(1800, 100, BOX, [MONITOR]), { x: 1800, y: 100 })
 })
 
-test('soft clamp pulls sprite back to a 32px strip at the left edge (negative x)', () => {
-  // bbox = (-280..-80)，完全在左缘外
-  assert.deepEqual(clampSpriteMinVisible(-300, 100, BOX, [MONITOR]), { x: -188, y: 100 })
-  // 左侧只剩 10px 可见：bbox=(-210..-10)
-  assert.deepEqual(clampSpriteMinVisible(-230, 100, BOX, [MONITOR]), { x: -188, y: 100 })
+test('soft clamp allows at most half the sprite out of the left edge (negative x)', () => {
+  // bbox 右缘下限 = 0 + 200/2 = 100 → bx ≥ -100 → x ≥ -120
+  assert.deepEqual(clampSpriteMinVisible(-300, 100, BOX, [MONITOR]), { x: -120, y: 100 })
+  // 左侧只剩 70px 可见（< 一半）
+  assert.deepEqual(clampSpriteMinVisible(-150, 100, BOX, [MONITOR]), { x: -120, y: 100 })
+  // 恰好一半可见是合法状态
+  assert.deepEqual(clampSpriteMinVisible(-120, 100, BOX, [MONITOR]), { x: -120, y: 100 })
 })
 
-test('soft clamp leaves exactly-32px visibility untouched', () => {
-  // bbox 左缘 = 1868+20 = 1888，右缘外可见正好 32px
-  assert.deepEqual(clampSpriteMinVisible(1868, 100, BOX, [MONITOR]), { x: 1868, y: 100 })
+test('soft clamp allows at most half the sprite out of the bottom edge', () => {
+  // bbox 顶缘上限 = 1080 - 240/2 = 960 → y ≤ 910
+  assert.deepEqual(clampSpriteMinVisible(100, 1000, BOX, [MONITOR]), { x: 100, y: 910 })
 })
 
-test('soft clamp pulls sprite back at the bottom edge', () => {
-  // bbox 顶 = 1040+50 = 1090，底部已不可见
-  assert.deepEqual(clampSpriteMinVisible(100, 1040, BOX, [MONITOR]), { x: 100, y: 998 })
-})
-
-test('soft clamp pulls sprite back at the top edge (negative y)', () => {
-  // bbox = (-350..-110)，完全在顶缘外
-  assert.deepEqual(clampSpriteMinVisible(100, -400, BOX, [MONITOR]), { x: 100, y: -258 })
+test('soft clamp allows at most half the sprite out of the top edge (negative y)', () => {
+  // bbox 底缘下限 = 0 + 240/2 = 120 → by ≥ -120 → y ≥ -170
+  assert.deepEqual(clampSpriteMinVisible(100, -400, BOX, [MONITOR]), { x: 100, y: -170 })
 })
 
 test('soft clamp uses the union bounds of multiple monitors', () => {
@@ -48,17 +47,23 @@ test('soft clamp uses the union bounds of multiple monitors', () => {
     MONITOR,
     { x: 1920, y: -200, width: 1080, height: 1920 },
   ]
-  // y=-100 位于副屏内（合法），x 拖出副屏右缘：bbox 左 = 3000
-  assert.deepEqual(clampSpriteMinVisible(2980, -100, BOX, monitors), { x: 2948, y: -100 })
+  // y=-100 位于副屏内（合法），x 拖出副屏右缘超一半：bbox 左缘上限 = 3000-100 = 2900
+  assert.deepEqual(clampSpriteMinVisible(2980, -100, BOX, monitors), { x: 2880, y: -100 })
   // 主屏内正常位置不受副屏影响
   assert.deepEqual(clampSpriteMinVisible(100, 100, BOX, monitors), { x: 100, y: 100 })
 })
 
-test('soft clamp degrades to half-visibility when monitor is smaller than the strip', () => {
-  // 40×30 的显示器：两侧各留 32px 共需 64px > 40 放不下 → mvX 退化为并集半边长
-  // floor(40/2)=20，mvY 退化为 floor(30/2)=15
+test('soft clamp clamps as much visibility as possible when monitor is smaller than the sprite', () => {
+  // 40×30 的显示器放不下一半精灵（半宽 100 > 40）：区间不冲突，钳到"尽量多可见"
+  // x: bx ∈ [0-100, 40-100] = [-100,-60] → x ∈ [-120,-80]，取上限 -80
+  // y: by ∈ [-120, 30-120] = [-120,-90] → y ∈ [-170,-140]，取上限 -140
   const tiny: MonitorRect = { x: 0, y: 0, width: 40, height: 30 }
-  assert.deepEqual(clampSpriteMinVisible(10, 0, BOX, [tiny]), { x: 0, y: -35 })
+  assert.deepEqual(clampSpriteMinVisible(10, 0, BOX, [tiny]), { x: -80, y: -140 })
+})
+
+test('soft clamp with ratio 1 behaves like the hard clamp on one monitor', () => {
+  // ratio=1 → 不允许任何部分出屏，单屏下与硬钳制结果一致
+  assert.deepEqual(clampSpriteMinVisible(1800, 100, BOX, [MONITOR], 1), { x: 1700, y: 100 })
 })
 
 test('soft clamp is a no-op without monitors', () => {

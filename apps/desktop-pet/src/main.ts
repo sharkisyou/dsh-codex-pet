@@ -372,9 +372,9 @@ if (kind === 'pet') {
       const dpr = window.devicePixelRatio || 1
       const x = Math.round(dragAnchor.winX + (dragLatest.screenX - dragAnchor.screenX) * dpr)
       const y = Math.round(dragAnchor.winY + (dragLatest.screenY - dragAnchor.screenY) * dpr)
-      // 软钳制：拖动中窗口始终包含光标（数学保证），不可能整体丢失，
-      // 这里只防"精灵大半被藏出屏幕"——显示器并集内保 32×32 最小可见条，
-      // 保留贴边玩法。monitors 为空（取不到）时 no-op，与旧行为一致。
+      // 软钳制：拖动中精灵至少一半留在显示器并集内——可以贴边（坐任务栏/
+      // 顶边半露），但不许大半藏出屏幕。monitors 为空（取不到）时 no-op，
+      // 与旧行为一致。
       const clamped = dragClamp !== null
         ? clampSpriteMinVisible(x, y, dragClamp.box, dragClamp.monitors)
         : { x, y }

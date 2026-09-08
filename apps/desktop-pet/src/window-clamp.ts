@@ -25,20 +25,21 @@ export interface SpriteBox {
   height: number
 }
 
-/** 拖动软钳制保留的最小可见条（物理 px）。 */
-export const MIN_VISIBLE_PX = 32
+/** 拖动软钳制的最小可见比例：精灵 bbox 至少这个比例留在显示器并集内。 */
+export const MIN_VISIBLE_RATIO = 0.5
 
 /**
- * 软钳制（拖动中）：精灵 bbox 在显示器并集内保持至少 minVisiblePx 的
- * 可见条——保留"贴边把宠物藏起来大半"的玩法，只防完全拖丢。
- * monitors 为空（浏览器预览 / 查询失败）时原样返回。
+ * 软钳制（拖动中）：精灵 bbox 至少 minVisibleRatio（默认一半）留在显示器
+ * 并集内——宠物可以贴边但不许大半藏出屏幕。ratio=1 等效完全不许出屏。
+ * 显示器放不下一半精灵时钳到"尽量多可见"。monitors 为空（浏览器预览 /
+ * 查询失败）时原样返回。
  */
 export function clampSpriteMinVisible(
   x: number,
   y: number,
   box: SpriteBox,
   monitors: readonly MonitorRect[],
-  minVisiblePx: number = MIN_VISIBLE_PX,
+  minVisibleRatio: number = MIN_VISIBLE_RATIO,
 ): { x: number; y: number } {
   if (monitors.length === 0) return { x, y }
   // 多显示器取并集包围盒：拖动跨屏时以虚拟桌面整体为界
@@ -46,17 +47,18 @@ export function clampSpriteMinVisible(
   const top = Math.min(...monitors.map((m) => m.y))
   const right = Math.max(...monitors.map((m) => m.x + m.width))
   const bottom = Math.max(...monitors.map((m) => m.y + m.height))
-  // 可见条不超过并集边长的一半（显示器比条还小时退化为对半可见）
-  const mvX = Math.min(minVisiblePx, Math.floor((right - left) / 2))
-  const mvY = Math.min(minVisiblePx, Math.floor((bottom - top) / 2))
+  // 各轴允许的最大出屏量 = bbox 尺寸 × (1 - ratio)；约束按"出屏量"而非
+  // "屏内条"表达，才能覆盖 bbox 跨在屏幕边缘（左右缘一内一外）的状态。
+  const outX = (1 - minVisibleRatio) * box.width
+  const outY = (1 - minVisibleRatio) * box.height
   let nextX = x
   const bx = x + box.offsetX
-  if (bx > right - mvX) nextX = right - mvX - box.offsetX
-  else if (bx + box.width < left + mvX) nextX = left + mvX - box.offsetX - box.width
+  if (bx + box.width > right + outX) nextX = right + outX - box.width - box.offsetX
+  else if (bx < left - outX) nextX = left - outX - box.offsetX
   let nextY = y
   const by = y + box.offsetY
-  if (by > bottom - mvY) nextY = bottom - mvY - box.offsetY
-  else if (by + box.height < top + mvY) nextY = top + mvY - box.offsetY - box.height
+  if (by + box.height > bottom + outY) nextY = bottom + outY - box.height - box.offsetY
+  else if (by < top - outY) nextY = top - outY - box.offsetY
   return { x: Math.round(nextX), y: Math.round(nextY) }
 }
 
