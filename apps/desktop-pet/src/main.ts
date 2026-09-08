@@ -4,10 +4,16 @@ import { CELL_HEIGHT, CELL_WIDTH, createDomPetRenderer } from './dom-pet-rendere
 import { mountPetShell, type PetShell } from './pet-shell.js'
 import { createUiClient, type UiClient } from './ui-client.js'
 import { mountSettingsApp } from './settings-app.js'
-import { getCurrentWindow } from '@tauri-apps/api/window'
+import { getCurrentWindow, availableMonitors, primaryMonitor } from '@tauri-apps/api/window'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { invoke } from '@tauri-apps/api/core'
 import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi'
+import {
+  clampSpriteFullyVisible,
+  clampSpriteMinVisible,
+  type MonitorRect,
+  type SpriteBox,
+} from './window-clamp.js'
 import type { AppStateSnapshot, ActivitySnapshot, TrayItemSnapshot } from './controller.js'
 import { type ParsedPet } from '@yshark/pet-core'
 import { renderTrayItems } from './tray-ui.js'
@@ -290,6 +296,59 @@ if (kind === 'pet') {
 
     /* ---------- 窗口拖动 ---------- */
 
+    /** 取显示器完整边界（物理 px，含任务栏——宠物允许坐任务栏），主显示器排首位；
+     *  非 Tauri 环境 / 查询失败返回 []（钳制退化为 no-op）。 */
+    async function fetchMonitorRects(): Promise<MonitorRect[]> {
+      if (!isTauri()) return []
+      try {
+        const [monitors, primary] = await Promise.all([availableMonitors(), primaryMonitor()])
+        const rects = monitors.map((m) => ({
+          x: m.position.x,
+          y: m.position.y,
+          width: m.size.width,
+          height: m.size.height,
+        }))
+        if (primary) {
+          const primaryRect: MonitorRect = {
+            x: primary.position.x,
+            y: primary.position.y,
+            width: primary.size.width,
+            height: primary.size.height,
+          }
+          const idx = rects.findIndex(
+            (r) => r.x === primaryRect.x && r.y === primaryRect.y && r.width === primaryRect.width && r.height === primaryRect.height,
+          )
+          if (idx > 0) {
+            rects.splice(idx, 1)
+            rects.unshift(primaryRect)
+          } else if (idx < 0) {
+            rects.unshift(primaryRect)
+          }
+        }
+        petLog('clamp', 'monitors', { rects, dpr: window.devicePixelRatio })
+        return rects
+      } catch (err) {
+        petLog('clamp', 'fetchMonitorRects failed', String(err))
+        return []
+      }
+    }
+
+    /** 量测精灵 bbox 相对窗口左上角的物理像素矩形（.pet 元素几何 × devicePixelRatio）。
+     *  钳制参照精灵而非窗口：窗口大部分是透明边距，"窗口可见"≠"宠物可见"。 */
+    function measureSpriteBox(): SpriteBox {
+      // petEl 是静态 DOM（#pet）不会缺失；守卫只为类型完备，零盒时钳制
+      // 退化为以窗口左上角为参照。
+      if (!petEl) return { offsetX: 0, offsetY: 0, width: 0, height: 0 }
+      const dpr = window.devicePixelRatio || 1
+      const rect = petEl.getBoundingClientRect()
+      return {
+        offsetX: rect.left * dpr,
+        offsetY: rect.top * dpr,
+        width: rect.width * dpr,
+        height: rect.height * dpr,
+      }
+    }
+
     let pointerDownAt: { x: number; y: number } | null = null
     let dragStarted = false
     const DRAG_THRESHOLD_PX = 5
@@ -299,6 +358,9 @@ if (kind === 'pet') {
     // 2026-09-07 实测浏览器被最小化）与边缘贴靠/顶部最大化，对桌宠都不适用。
     // 注：跨不同 DPI 显示器拖动时增量换算会有轻微漂移，松手重抓即恢复。
     let dragAnchor: { winX: number; winY: number; screenX: number; screenY: number } | null = null
+    // 拖动钳制上下文：锚定时取显示器边界并量测精灵 bbox，拖动期间复用
+    //（窗口尺寸/缩放拖动中不变，bbox 相对偏移恒定）。
+    let dragClamp: { monitors: MonitorRect[]; box: SpriteBox } | null = null
     let dragLatest: { screenX: number; screenY: number } | null = null
     let dragFramePending = false
 
@@ -310,7 +372,17 @@ if (kind === 'pet') {
       const dpr = window.devicePixelRatio || 1
       const x = Math.round(dragAnchor.winX + (dragLatest.screenX - dragAnchor.screenX) * dpr)
       const y = Math.round(dragAnchor.winY + (dragLatest.screenY - dragAnchor.screenY) * dpr)
-      void win.setPosition(new PhysicalPosition(x, y)).catch(() => { /* 拖动跟随失败静默 */ })
+      // 软钳制：拖动中窗口始终包含光标（数学保证），不可能整体丢失，
+      // 这里只防"精灵大半被藏出屏幕"——显示器并集内保 32×32 最小可见条，
+      // 保留贴边玩法。monitors 为空（取不到）时 no-op，与旧行为一致。
+      const clamped = dragClamp !== null
+        ? clampSpriteMinVisible(x, y, dragClamp.box, dragClamp.monitors)
+        : { x, y }
+      if (dragClamp !== null && (clamped.x !== x || clamped.y !== y)) {
+        // 只在钳制实际改变位置时记录，避免拖动每帧刷屏。
+        petLog('clamp', 'drag soft-clamped', { x, y, clamped, monitors: dragClamp.monitors.length })
+      }
+      void win.setPosition(new PhysicalPosition(clamped.x, clamped.y)).catch(() => { /* 拖动跟随失败静默 */ })
     }
 
     if (stage) {
@@ -320,13 +392,15 @@ if (kind === 'pet') {
         dragStarted = false
         dragAnchor = null
         dragLatest = null
+        dragClamp = null
         const win = currentTauriWindow()
         if (win) {
-          void win.outerPosition()
-            .then((pos) => {
+          void Promise.all([win.outerPosition(), fetchMonitorRects()])
+            .then(([pos, monitors]) => {
               // 按下尚未结束且未开始拖动时锚定窗口位置
               if (pointerDownAt !== null && !dragStarted) {
                 dragAnchor = { winX: pos.x, winY: pos.y, screenX: event.screenX, screenY: event.screenY }
+                dragClamp = { monitors, box: measureSpriteBox() }
               }
             })
             .catch(() => { /* 取不到窗口位置则本次放弃拖动 */ })
@@ -357,6 +431,7 @@ if (kind === 'pet') {
         pointerDownAt = null
         dragStarted = false
         dragAnchor = null
+        dragClamp = null
         dragLatest = null
       }
       stage.addEventListener('pointerup', resetDrag)
@@ -425,12 +500,30 @@ if (kind === 'pet') {
       applyAwake()
       if (!positionRestored) {
         positionRestored = true
-        if (settings.windowX != null && settings.windowY != null) {
+        const wx = settings.windowX
+        const wy = settings.windowY
+        if (wx != null && wy != null) {
           const win = currentTauriWindow()
           if (win) {
-            void win.setPosition(new PhysicalPosition(settings.windowX, settings.windowY)).catch(() => {
-              // Ignore restore failures (e.g. position no longer valid).
-            })
+            // 硬钳制恢复：旧档坐标可能落在已变更分辨率/已拔掉的显示器区域
+            //（开机即丢），按精灵 bbox 完整拉回坐标所在显示器（都不命中则
+            // 主显示器）再 setPosition。查询失败退化为直接恢复。
+            void (async () => {
+              try {
+                const [size, monitors] = await Promise.all([win.outerSize(), fetchMonitorRects()])
+                const box = measureSpriteBox()
+                const clamped = clampSpriteFullyVisible(wx, wy, box, monitors)
+                petLog('clamp', 'restore', {
+                  wx, wy, size: { w: size.width, h: size.height }, box, monitors: monitors.length, clamped,
+                })
+                await win.setPosition(new PhysicalPosition(clamped.x, clamped.y))
+              } catch (err) {
+                petLog('clamp', 'restore fallback (query failed)', String(err))
+                await win.setPosition(new PhysicalPosition(wx, wy)).catch(() => {
+                  // Ignore restore failures (e.g. position no longer valid).
+                })
+              }
+            })()
           }
         }
       }
