@@ -62,6 +62,13 @@ cp target/x86_64-pc-windows-gnu/release/desktop-pet.exe \
   - **`PET_SERVER_HOST=0.0.0.0` 的作用**：让 WSL 的 pet server 也监听局域网接口，
     使浏览器通过局域网 IP 预览（`http://172.20.169.96:1420/` 连 `172.20.169.96:3720`）能连上；
     Windows 桌宠本身靠 localhost relay 即可，不设也能连。
+  - **pet server 常驻（2026-09-08 起 systemd 化）**：`systemctl --user status pet-server`——
+    崩溃 3s 自拉（Restart=always），linger 已开（WSL 启动即自动运行，无需登录会话），
+    替代旧 setsid 手工方式。正常日志仍由 server tee 写 `~/.dsh/logs/pet-server.log`；
+    崩溃遗言/启动早期错误看 `journalctl --user -u pet-server -e`。unit 在
+    `~/.config/systemd/user/pet-server.service`（ExecStart 用 nvm node 绝对路径跑
+    monorepo 根的 tsx）。Windows 开机自启桌宠：`shell:startup\desktop-pet-start.cmd`
+    （WSL 由用户手动启动，桌宠 exe 靠自动重连等待 server）。
 - **调试捕获**：验证 Windows 桌宠渲染用 `PrintWindow` 截窗口（透明区域会呈黑色假象，不代表真的黑底；
   现成脚本 `C:\Users\HM\cap-pet.ps1`，按尺寸特征定位宠物窗口）。视觉验证用
   `~/.dsh/skills/opencode-vision/glm-vision.py "<提示词>" <截图路径>`（GLM 5.3 flash）。
