@@ -1,0 +1,5 @@
+# MinGW 交叉编译链接器配置（随仓库提交；仅作用于 x86_64-pc-windows-gnu 目标，
+# 不影响本机 Linux 构建与 MSVC 构建。前置：本机装有 mingw-w64 包）
+# 用法：cargo build --target x86_64-pc-windows-gnu --features tauri/custom-protocol [--release]
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"

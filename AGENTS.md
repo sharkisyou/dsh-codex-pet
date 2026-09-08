@@ -23,8 +23,8 @@
 ### 前置条件
 
 - **WSL 侧（构建机）**：node/npm（nvm）、rustup（`rustup target add x86_64-pc-windows-gnu`）、
-  `sudo apt install mingw-w64`；仓库内未跟踪文件 `apps/desktop-pet/src-tauri/.cargo/config.toml`
-  指定 gnu 目标链接器（本机已配好，换机器需重建该文件）。
+  `sudo apt install mingw-w64`；gnu 链接器配置随仓库提交（`apps/desktop-pet/src-tauri/.cargo/config.toml`），
+  无需手工重建。
 - **Windows 侧（运行机）**：仅需 WebView2 运行时；没有 Rust/VS2022 完全不影响构建。
 
 ### 构建与部署（直接命令）
