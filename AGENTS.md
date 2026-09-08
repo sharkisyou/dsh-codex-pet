@@ -67,8 +67,8 @@ cp target/x86_64-pc-windows-gnu/release/desktop-pet.exe \
     替代旧 setsid 手工方式。正常日志仍由 server tee 写 `~/.dsh/logs/pet-server.log`；
     崩溃遗言/启动早期错误看 `journalctl --user -u pet-server -e`。unit 在
     `~/.config/systemd/user/pet-server.service`（ExecStart 用 nvm node 绝对路径跑
-    monorepo 根的 tsx）。Windows 开机自启桌宠：`shell:startup\desktop-pet-start.cmd`
-    （WSL 由用户手动启动，桌宠 exe 靠自动重连等待 server）。
+    monorepo 根的 tsx）。桌宠 exe 与 WSL 均由用户手动启动（桌宠靠自动重连等待 server，
+    启动顺序无关）。
 - **调试捕获**：验证 Windows 桌宠渲染用 `PrintWindow` 截窗口（透明区域会呈黑色假象，不代表真的黑底；
   现成脚本 `C:\Users\HM\cap-pet.ps1`，按尺寸特征定位宠物窗口）。视觉验证用
   `~/.dsh/skills/opencode-vision/glm-vision.py "<提示词>" <截图路径>`（GLM 5.3 flash）。
