@@ -534,6 +534,8 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     marketDetail.hidden = false
     marketDetailOpenedAtMs = Date.now()
     marketDetailName.textContent = pet.displayName
+    // 链接指到该宠物的官方详情页（构建时的 href 是首页兜底，每次打开重设）。
+    marketDetailLink.href = `https://petdex.dev/zh/pets/${pet.slug}`
     marketDetailMeta.textContent = [pet.kind, pet.submittedBy ? `by ${pet.submittedBy}` : ''].filter(Boolean).join(' · ') || pet.slug
     // 描述区留空；加载反馈由预览区的蓝色方框动画承担。
     marketDetailDesc.textContent = ''
