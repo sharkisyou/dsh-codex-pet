@@ -94,8 +94,11 @@ cp target/x86_64-pc-windows-gnu/release/desktop-pet.exe \
 
 - **前置系统库（Ubuntu）**：`sudo apt install libwebkit2gtk-4.1-dev build-essential libgtk-3-dev
   libayatana-appindicator3-dev`（本机 WSL 侧已装好）。
-- **构建**：`apps/desktop-pet` 下 `npm run build`（重建前端 dist）→ `src-tauri` 下 `cargo build --release`
-  （release 把 dist 嵌进二进制，运行时不需要 Vite）。
+- **构建**：`apps/desktop-pet` 下 `npm run build`（重建前端 dist）→ `src-tauri` 下
+  `cargo build --release --features tauri/custom-protocol`。**必须带该 feature**（与上方 MinGW 配方同一坑，
+  2026-09-09 实测）：不开时 Linux release 同样不嵌 dist、走 devUrl（http://localhost:1420）——Vite 没跑就是
+  空白窗口（进程存活、WebKit 子进程齐全，但 3720 仅 LISTEN 无 ESTAB、`$HOME/dsh-pet.log` 不生成）；
+  开了才是自包含，运行时不需要 Vite。
 - **运行**：先起数据面 `npm run server`（pet server 3720），再跑 `src-tauri/target/release/desktop-pet`。
 - **平台差异（cfg 门控）**：`focus_dsh_gui` 非 Windows 退化为 `xdg-open` 打开 GUI（不能聚焦既有浏览器窗口）；
   日志落 `$HOME/dsh-pet.log`（Windows 仍是 `%USERPROFILE%`）；系统托盘走 libayatana-appindicator
