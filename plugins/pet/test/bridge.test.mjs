@@ -173,6 +173,37 @@ test('subagent events are resolved to the parent session', async () => {
   })
 })
 
+test('a subagent’s own live events never become tray sessions', async () => {
+  // 回归：子代理是独立 agent，agent.id === 子会话 id，它自己的 agent/status、
+  // tools/execute、审批、错误事件曾按子会话 id 转发，托盘于是凭空多出一条没有
+  // 标题（显示原始 id）的幽灵条目，且只有下一次 session/sync 才能回收。
+  const child = { id: 'child1', header: { id: 'child1', parentSession: 's1', origin: 'subagent' } }
+  const h = createHarness({ sessions: { list: () => [], get: (id) => (id === 'child1' ? child : undefined) } })
+  h.ws().open()
+  const before = FakeWebSocket.sent.length
+
+  const childAgent = { id: 'child1', session: child }
+  await h.emit('agent/status', { agent: childAgent, status: 'running' })
+  await h.emit('agent/error', { agent: childAgent, message: 'boom' })
+  await h.emit('tools/execute', { agent: childAgent, name: 'bash' }, async () => 'ok')
+  await h.emit('approval/request', { agent: childAgent }, async () => 'denied')
+  // 旧宿主不带 agent.session 时，血缘只存在于会话存储里。
+  await h.emit('agent/status', { agent: { id: 'child1' }, status: 'idle' })
+
+  assert.deepEqual(FakeWebSocket.sent.slice(before), [], 'child-scoped events must not reach the pet')
+  assert.deepEqual(h.bridge.snapshotSessions(), [], 'the child must not be replayed in the snapshot')
+  assert.deepEqual(h.bridge.liveSessionIds, [])
+})
+
+test('a top-level session is still reported when its store entry has no parent', async () => {
+  const top = { id: 's1', header: { id: 's1', isSeeded: false } }
+  const h = createHarness({ sessions: { list: () => [top], get: () => top } })
+  h.ws().open()
+
+  await h.emit('agent/status', { agent: { id: 's1', session: top }, status: 'running' })
+  assert.deepEqual(FakeWebSocket.sent.at(-1), { type: 'session/status', agent: BRIDGE_AGENT, sessionId: 's1', status: 'running' })
+})
+
 test('handshake snapshot includes sessions known from DSH and wire events', async () => {
   const h = createHarness({ sessions: { list: () => [{ id: 's1', title: 'Hello' }, { id: 's2', title: 'World' }], get: () => undefined }, bridgeOptions: { reconnectDelay: 5 } })
   const ws = h.ws()

@@ -643,6 +643,9 @@ export function createBridge(ctx, options = {}) {
     refreshSessions()
     const out = []
     for (const [sid, info] of knownSessions) {
+      // Belt-and-braces: a child that slipped in before its lineage was known
+      // must never be replayed as a tray session on reconnect.
+      if (childParent.has(sid)) continue
       const entry = { sessionId: sid }
       if (info.title) entry.title = info.title
       if (info.lastEventAt > 0) entry.lastEventAt = info.lastEventAt
@@ -911,6 +914,28 @@ export function createBridge(ctx, options = {}) {
     })
   }
 
+  // The pet tracks TOP-LEVEL sessions only (plugins/pet/CONTEXT.md：子代理活动归入
+  // 其父会话). A subagent is a full agent whose id IS its child session id
+  // (`agent.id === agent.session.id`), so the child's own agent/status, tool,
+  // approval and error events reach these handlers keyed by the CHILD id.
+  // Forwarding them verbatim materialized a phantom tray entry — labelled with
+  // the raw session id, since a child never enters the directory — that nothing
+  // reclaimed until the next session/sync, which never fires while the child
+  // runs. The delegating parent already reads 'running' from the subagent
+  // counters, so a child-scoped event is dropped at this boundary.
+  function isChildScoped(sid, holder) {
+    if (sid === null) return false
+    if (childParent.has(sid)) return true
+    if (holder !== null && typeof holder === 'object' && isChildSession(holder.session)) return true
+    const service = getSessionsService(ctx)
+    if (!service || typeof service.get !== 'function') return false
+    try {
+      return isChildSession(service.get(sid))
+    } catch {
+      return false
+    }
+  }
+
   if (ctx && typeof ctx.on === 'function') {
     const onSessionCreated = (session) => {
       const sid = sessionIdOfEntry(session)
@@ -938,6 +963,7 @@ export function createBridge(ctx, options = {}) {
     ctx.on('agent/status', (payload) => {
       const sid = sessionIdOf(payload && payload.agent)
       if (sid === null) return
+      if (isChildScoped(sid, payload && payload.agent)) return
       const info = ensureSession(sid)
       touch(sid)
       const running = Boolean(payload && payload.status === 'running')
@@ -978,6 +1004,7 @@ export function createBridge(ctx, options = {}) {
     ctx.on('agent/error', (payload) => {
       const sid = sessionIdOf(payload && payload.agent)
       if (sid === null) return
+      if (isChildScoped(sid, payload && payload.agent)) return
       const info = touch(sid)
       info.state = 'blocked'
       info.pendingKind = null
@@ -994,6 +1021,7 @@ export function createBridge(ctx, options = {}) {
     ctx.on('tools/execute', (exec, next) => {
       const sid = sessionIdOf(exec && exec.agent)
       if (sid === null) return typeof next === 'function' ? next() : undefined
+      if (isChildScoped(sid, exec && exec.agent)) return typeof next === 'function' ? next() : undefined
       const info = clearBlocked(sid)
       touch(sid)
       const name = toolNameOf(exec)
@@ -1039,6 +1067,7 @@ export function createBridge(ctx, options = {}) {
     ctx.on('approval/request', (req, next) => {
       const sid = sessionIdOf(req && req.agent)
       if (sid === null) return typeof next === 'function' ? next() : undefined
+      if (isChildScoped(sid, req && req.agent)) return typeof next === 'function' ? next() : undefined
       const info = clearBlocked(sid)
       touch(sid)
       info.approvalCount = (info.approvalCount || 0) + 1
