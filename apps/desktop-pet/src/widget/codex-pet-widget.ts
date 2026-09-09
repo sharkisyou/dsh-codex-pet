@@ -178,7 +178,6 @@ export class CodexPetElement extends BaseElement {
   private drag: DragState | null = null
   private activePointers = new Map<number, { x: number; y: number }>()
   private pinch: PinchState | null = null
-  private hovered = false
   private settleTimer: ReturnType<typeof setTimeout> | null = null
   private bubbleTimer: ReturnType<typeof setTimeout> | null = null
   private manifestUrl = ''
@@ -189,14 +188,6 @@ export class CodexPetElement extends BaseElement {
   private readonly onPointerCancel = this.handlePointerCancel.bind(this)
   private readonly onWheel = this.handleWheel.bind(this)
   private readonly onViewportResize = this.handleViewportResize.bind(this)
-  private readonly onMouseEnter = () => {
-    this.hovered = true
-    if (!this.settleTimer) this.setState('jumping')
-  }
-  private readonly onMouseLeave = () => {
-    this.hovered = false
-    if (!this.settleTimer) this.setState('idle')
-  }
   private readonly boundTick = this.tick.bind(this)
 
   constructor() {
@@ -226,8 +217,6 @@ export class CodexPetElement extends BaseElement {
   connectedCallback(): void {
     if (!this.hasAttribute('position')) this.setAttribute('position', 'bottom-right')
     this.petEl.addEventListener('pointerdown', this.onPointerDown)
-    this.petEl.addEventListener('mouseenter', this.onMouseEnter)
-    this.petEl.addEventListener('mouseleave', this.onMouseLeave)
     this.addEventListener('wheel', this.onWheel, { passive: false })
     window.addEventListener('pointermove', this.onPointerMove)
     window.addEventListener('pointerup', this.onPointerUp)
@@ -246,8 +235,6 @@ export class CodexPetElement extends BaseElement {
     if (this.settleTimer !== null) clearTimeout(this.settleTimer)
     if (this.bubbleTimer !== null) clearTimeout(this.bubbleTimer)
     this.petEl.removeEventListener('pointerdown', this.onPointerDown)
-    this.petEl.removeEventListener('mouseenter', this.onMouseEnter)
-    this.petEl.removeEventListener('mouseleave', this.onMouseLeave)
     this.removeEventListener('wheel', this.onWheel)
     window.removeEventListener('pointermove', this.onPointerMove)
     window.removeEventListener('pointerup', this.onPointerUp)
@@ -297,7 +284,7 @@ export class CodexPetElement extends BaseElement {
     if (this.bubbleTimer !== null) clearTimeout(this.bubbleTimer)
     this.bubbleTimer = setTimeout(() => {
       this.bubbleEl.classList.remove('is-visible')
-      if (!this.hovered) this.setState('idle')
+      this.setState('idle')
     }, readNumber(options.timeout, BUBBLE_DEFAULT_TIMEOUT))
   }
 
@@ -361,7 +348,7 @@ export class CodexPetElement extends BaseElement {
     if (this.settleTimer !== null) clearTimeout(this.settleTimer)
     this.settleTimer = setTimeout(() => {
       this.settleTimer = null
-      this.setState(this.hovered ? 'jumping' : 'idle')
+      this.setState('idle')
     }, 180)
   }
 
