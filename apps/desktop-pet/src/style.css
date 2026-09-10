@@ -130,12 +130,15 @@ input {
   gap: 8px;
   opacity: 0;
   visibility: hidden;
+  /* 隐藏时不拦事件；显示时接管事件——剪影就是当时的"宠物本体"，
+     要能按下起拖（拖动起点判定见 src/pet-drag-surface.ts）。 */
   pointer-events: none;
   transition: opacity 0.45s ease, visibility 0s linear 0.45s;
 }
 .pet-standby.show {
   opacity: 1;
   visibility: visible;
+  pointer-events: auto;
   transition: opacity 0.45s ease;
 }
 .pet-standby-silhouette {

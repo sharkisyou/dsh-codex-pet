@@ -10,10 +10,18 @@ import { invoke } from '@tauri-apps/api/core'
 import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi'
 import {
   clampSpriteFullyVisible,
-  clampSpriteMinVisible,
   type MonitorRect,
   type SpriteBox,
 } from './window-clamp.js'
+import { createDragController } from './drag-controller.js'
+import { bindPetDragStart } from './pet-drag-surface.js'
+import {
+  positionsDiffer,
+  preferredRestorePosition,
+  readLocalWindowPos,
+  writeLocalWindowPos,
+  type WindowPosition,
+} from './pet-position-cache.js'
 import type { AppStateSnapshot, ActivitySnapshot, TrayItemSnapshot } from './controller.js'
 import { type ParsedPet } from '@yshark/pet-core'
 import { renderTrayItems } from './tray-ui.js'
@@ -148,7 +156,7 @@ if (kind === 'pet') {
       }
     }
 
-    /* ---------- 桌宠外壳交互（气泡 / 缩放 / 移动动画 / 右键菜单） ---------- */
+    /* ---------- 桌宠外壳交互（气泡 / 移动动画 / 右键菜单） ---------- */
 
     async function openSettingsWindow(): Promise<void> {
       if (!isTauri()) {
@@ -176,11 +184,6 @@ if (kind === 'pet') {
       // 气泡功能已移除；pet-shell 仍要求一个 bubbleEl，传一个无用的离屏 div。
       bubbleEl: document.createElement('div'),
       contextMenuEl,
-      getScale: () => zoom,
-      setScale: (next) => {
-        zoom = next
-        applyZoom()
-      },
       renderer,
       onOpenSettings: openSettingsWindow,
       onHide: hidePetWindow,
@@ -272,10 +275,51 @@ if (kind === 'pet') {
 
     /* ---------- 窗口位置持久化 ---------- */
 
+    /** 窗口外框物理坐标**缓存**：pointerdown 同步取拖动锚点用。
+     *  现查要走一次 Tauri IPC（实测中位 28ms、长尾 119ms），按下后这段时间里
+     *  到达的 pointermove 会被丢弃——快甩因此整段失效（2026-09-10 实机定位）。
+     *  缓存由 onMoved 事件维护（窗口每次移动都会到达）。 */
+    let cachedWindowPos: { x: number; y: number } | null = null
+    /** 显示器矩形缓存：拖动软钳制用。启动取一次，每次拖动后再刷新（拾取热插拔/改分辨率）。 */
+    let cachedMonitorRects: MonitorRect[] = []
+    /** 本地兜底位置（localStorage）：权威存档在服务端，但断线时会丢（见 ui-client）；
+     *  本地这份保证"服务端没起来也能回到上次位置"，并在不一致时回推给服务端一次。 */
+    let localWindowPos: WindowPosition | null = null
+    /** 本地/服务端位置是否已收敛（每次会话只回推一次）。 */
+    let positionReconciled = false
+
+    /** localStorage 访问（隐私模式/被禁用时返回 null，功能退化为仅服务端存档）。 */
+    function petStorage(): Storage | null {
+      try {
+        return window.localStorage
+      } catch {
+        return null
+      }
+    }
+
+    async function primeWindowPosition(): Promise<void> {
+      const win = currentTauriWindow()
+      if (!win) return
+      try {
+        const pos = await win.outerPosition()
+        cachedWindowPos = { x: pos.x, y: pos.y }
+      } catch {
+        // 首帧查询失败：pointerdown 会走 drag-controller 的异步兜底分支。
+      }
+    }
+
+    async function refreshMonitorRects(): Promise<void> {
+      cachedMonitorRects = await fetchMonitorRects()
+    }
+
     function saveWindowPosition(x: number, y: number): void {
+      // 本地兜底立刻生效（内存），落盘与 WS 存档共用 300ms 防抖：
+      // 断线期间 WS 存档会被 ui-client 丢弃/补发，本地这份保证"重启回到上次位置"。
+      localWindowPos = { x, y }
       if (positionSaveTimer !== null) clearTimeout(positionSaveTimer)
       positionSaveTimer = setTimeout(() => {
         positionSaveTimer = null
+        writeLocalWindowPos(petStorage(), { x, y })
         client.updateSettings({ windowX: x, windowY: y })
       }, 300)
     }
@@ -285,6 +329,7 @@ if (kind === 'pet') {
       if (!win) return
       try {
         await win.onMoved(({ payload }) => {
+          cachedWindowPos = { x: payload.x, y: payload.y }
           shell.onWindowMoved(payload.x)
           if (!positionRestored) return
           saveWindowPosition(payload.x, payload.y)
@@ -294,7 +339,35 @@ if (kind === 'pet') {
       }
     }
 
-    /* ---------- 窗口拖动 ---------- */
+    /** 恢复位置：先按精灵 bbox 硬钳制（治愈分辨率变更/拔屏/半出屏旧档）再落位。
+     *  source 只用于日志——`local` = localStorage 兜底值，`settings` = 服务端设置值。 */
+    async function applyRestorePosition(pos: { x: number; y: number }, source: 'local' | 'settings'): Promise<void> {
+      const win = currentTauriWindow()
+      if (!win) return
+      try {
+        const [size, monitors] = await Promise.all([win.outerSize(), fetchMonitorRects()])
+        const box = measureSpriteBox()
+        const clamped = clampSpriteFullyVisible(pos.x, pos.y, box, monitors)
+        petLog('clamp', 'restore', {
+          source,
+          wx: pos.x,
+          wy: pos.y,
+          size: { w: size.width, h: size.height },
+          box,
+          monitors: monitors.length,
+          clamped,
+        })
+        await win.setPosition(new PhysicalPosition(clamped.x, clamped.y))
+        cachedWindowPos = { x: clamped.x, y: clamped.y }
+      } catch (err) {
+        petLog('clamp', 'restore fallback (query failed)', String(err))
+        await win.setPosition(new PhysicalPosition(pos.x, pos.y)).catch(() => {
+          // Ignore restore failures (e.g. position no longer valid).
+        })
+      }
+    }
+
+    /* ---------- 拖动/软钳制的坐标工具 ---------- */
 
     /** 取显示器完整边界（物理 px，含任务栏——宠物允许坐任务栏），主显示器排首位；
      *  非 Tauri 环境 / 查询失败返回 []（钳制退化为 no-op）。 */
@@ -349,93 +422,50 @@ if (kind === 'pet') {
       }
     }
 
-    let pointerDownAt: { x: number; y: number } | null = null
-    let dragStarted = false
-    const DRAG_THRESHOLD_PX = 5
-    // 手动拖动：锚定按下时的窗口物理坐标与光标屏幕坐标（CSS px），
-    // move 时按增量 setPosition。不用 startDragging()——原生标题栏拖动循环
-    // 会触发 Aero Shake（快速来回甩动宠物 → Windows 最小化其他所有窗口，
-    // 2026-09-07 实测浏览器被最小化）与边缘贴靠/顶部最大化，对桌宠都不适用。
-    // 注：跨不同 DPI 显示器拖动时增量换算会有轻微漂移，松手重抓即恢复。
-    let dragAnchor: { winX: number; winY: number; screenX: number; screenY: number } | null = null
-    // 拖动钳制上下文：锚定时取显示器边界并量测精灵 bbox，拖动期间复用
-    //（窗口尺寸/缩放拖动中不变，bbox 相对偏移恒定）。
-    let dragClamp: { monitors: MonitorRect[]; box: SpriteBox } | null = null
-    let dragLatest: { screenX: number; screenY: number } | null = null
-    let dragFramePending = false
-
-    function applyDragFrame(): void {
-      dragFramePending = false
-      if (!dragStarted || dragAnchor === null || dragLatest === null) return
-      const win = currentTauriWindow()
-      if (!win) return
-      const dpr = window.devicePixelRatio || 1
-      const x = Math.round(dragAnchor.winX + (dragLatest.screenX - dragAnchor.screenX) * dpr)
-      const y = Math.round(dragAnchor.winY + (dragLatest.screenY - dragAnchor.screenY) * dpr)
-      // 软钳制：拖动中精灵至少一半留在显示器并集内——可以贴边（坐任务栏/
-      // 顶边半露），但不许大半藏出屏幕。monitors 为空（取不到）时 no-op，
-      // 与旧行为一致。
-      const clamped = dragClamp !== null
-        ? clampSpriteMinVisible(x, y, dragClamp.box, dragClamp.monitors)
-        : { x, y }
-      if (dragClamp !== null && (clamped.x !== x || clamped.y !== y)) {
-        // 只在钳制实际改变位置时记录，避免拖动每帧刷屏。
-        petLog('clamp', 'drag soft-clamped', { x, y, clamped, monitors: dragClamp.monitors.length })
-      }
-      void win.setPosition(new PhysicalPosition(clamped.x, clamped.y)).catch(() => { /* 拖动跟随失败静默 */ })
-    }
+    /* ---------- 窗口拖动 ---------- */
+    // 手势状态机（锚点/阈值/帧调度/软钳制/补帧与串台防护）在
+    // `drag-controller.ts`，此处只做宿主接线：缓存、Tauri 调用与日志。
+    // 不用 startDragging()——原生标题栏拖动循环会触发 Aero Shake（快速来回
+    // 甩动宠物 → Windows 最小化其他所有窗口，2026-09-07 实测浏览器被最小化）
+    // 与边缘贴靠/顶部最大化，对桌宠都不适用。注：跨不同 DPI 显示器拖动时
+    // 增量换算会有轻微漂移，松手重抓即恢复。
+    const drag = createDragController({
+      getWindowPosition: () => cachedWindowPos,
+      queryWindowPosition: async () => {
+        const win = currentTauriWindow()
+        if (!win) throw new Error('window unavailable')
+        const pos = await win.outerPosition()
+        cachedWindowPos = { x: pos.x, y: pos.y }
+        return cachedWindowPos
+      },
+      getMonitorRects: () => cachedMonitorRects,
+      queryMonitorRects: () => fetchMonitorRects(),
+      measureSpriteBox,
+      setWindowPosition: (x, y) => {
+        const win = currentTauriWindow()
+        if (!win) return
+        void win.setPosition(new PhysicalPosition(x, y)).catch(() => { /* 拖动跟随失败静默 */ })
+      },
+      getDevicePixelRatio: () => window.devicePixelRatio || 1,
+      log: (scope, message, data) => petLog(scope, message, data),
+    })
 
     if (stage) {
-      stage.addEventListener('pointerdown', (event) => {
-        if (event.button !== 0) return
-        pointerDownAt = { x: event.clientX, y: event.clientY }
-        dragStarted = false
-        dragAnchor = null
-        dragLatest = null
-        dragClamp = null
-        const win = currentTauriWindow()
-        if (win) {
-          void Promise.all([win.outerPosition(), fetchMonitorRects()])
-            .then(([pos, monitors]) => {
-              // 按下尚未结束且未开始拖动时锚定窗口位置
-              if (pointerDownAt !== null && !dragStarted) {
-                dragAnchor = { winX: pos.x, winY: pos.y, screenX: event.screenX, screenY: event.screenY }
-                dragClamp = { monitors, box: measureSpriteBox() }
-              }
-            })
-            .catch(() => { /* 取不到窗口位置则本次放弃拖动 */ })
-        }
-        if (typeof stage.setPointerCapture === 'function') {
-          try { stage.setPointerCapture(event.pointerId) } catch { /* ignore */ }
-        }
+      // 起拖只认"宠物面"（精灵本体 / 待机剪影）：窗口四周的透明边距在 DOM 里虽仍命中
+      // `.pet-stage`，但不是拖动热区——否则"拖宠物旁边的空白区，宠物也跟着动"
+      // （2026-09-10 用户实测）。判定与指针捕获见 `pet-drag-surface.ts`（含回归测试）；
+      // 空白区的点击穿透是另一条线（`.scratch/pet-clickthrough/`）。
+      bindPetDragStart(stage, standbyEl ? [petEl, standbyEl] : [petEl], drag)
+      stage.addEventListener('pointermove', (event) => drag.pointerMove(event))
+      stage.addEventListener('pointerup', (event) => {
+        // 传事件：浏览器输入合并会把整段位移并进 up，松手坐标需当最后一次移动兜底。
+        const result = drag.pointerUp(event)
+        // 一次拖动结束后刷新显示器缓存：热插拔/改分辨率在窗口移动的自然节点被拾取。
+        if (result.frames > 0) void refreshMonitorRects()
       })
-      stage.addEventListener('pointermove', (event) => {
-        if (pointerDownAt === null) return
-        if (!dragStarted) {
-          if (dragAnchor === null) return // 窗口位置锚点未就绪，先不判定
-          const dx = event.clientX - pointerDownAt.x
-          const dy = event.clientY - pointerDownAt.y
-          if (Math.hypot(dx, dy) >= DRAG_THRESHOLD_PX) {
-            dragStarted = true
-          } else {
-            return
-          }
-        }
-        dragLatest = { screenX: event.screenX, screenY: event.screenY }
-        if (!dragFramePending) {
-          dragFramePending = true
-          requestAnimationFrame(applyDragFrame)
-        }
+      stage.addEventListener('pointercancel', () => {
+        drag.pointerCancel()
       })
-      const resetDrag = (): void => {
-        pointerDownAt = null
-        dragStarted = false
-        dragAnchor = null
-        dragClamp = null
-        dragLatest = null
-      }
-      stage.addEventListener('pointerup', resetDrag)
-      stage.addEventListener('pointercancel', resetDrag)
     }
 
     /* ---------- 缩放 ---------- */
@@ -498,33 +528,25 @@ if (kind === 'pet') {
       awake = settings.awake
       applyZoom()
       applyAwake()
+      const serverPos: WindowPosition | null =
+        settings.windowX != null && settings.windowY != null
+          ? { x: settings.windowX, y: settings.windowY }
+          : null
       if (!positionRestored) {
         positionRestored = true
-        const wx = settings.windowX
-        const wy = settings.windowY
-        if (wx != null && wy != null) {
-          const win = currentTauriWindow()
-          if (win) {
-            // 硬钳制恢复：旧档坐标可能落在已变更分辨率/已拔掉的显示器区域
-            //（开机即丢），按精灵 bbox 完整拉回坐标所在显示器（都不命中则
-            // 主显示器）再 setPosition。查询失败退化为直接恢复。
-            void (async () => {
-              try {
-                const [size, monitors] = await Promise.all([win.outerSize(), fetchMonitorRects()])
-                const box = measureSpriteBox()
-                const clamped = clampSpriteFullyVisible(wx, wy, box, monitors)
-                petLog('clamp', 'restore', {
-                  wx, wy, size: { w: size.width, h: size.height }, box, monitors: monitors.length, clamped,
-                })
-                await win.setPosition(new PhysicalPosition(clamped.x, clamped.y))
-              } catch (err) {
-                petLog('clamp', 'restore fallback (query failed)', String(err))
-                await win.setPosition(new PhysicalPosition(wx, wy)).catch(() => {
-                  // Ignore restore failures (e.g. position no longer valid).
-                })
-              }
-            })()
-          }
+        // 本地兜底优先：断线期间的拖动只写进了 localStorage，服务端可能停在旧值。
+        const target = preferredRestorePosition(localWindowPos, serverPos)
+        if (target !== null) void applyRestorePosition(target, localWindowPos !== null ? 'local' : 'settings')
+      }
+      // 本地与服务端位置不一致（多为"断线期间拖过"）时回推一次本地值：
+      // 断线中会进 ui-client 的待补发槽，重连后自动补；收敛后不再重复推。
+      if (!positionReconciled) {
+        if (localWindowPos === null || !positionsDiffer(localWindowPos, serverPos)) {
+          positionReconciled = true
+        } else {
+          positionReconciled = true
+          petLog('ui', 'position-reconciled', { local: localWindowPos, server: serverPos })
+          client.updateSettings({ windowX: localWindowPos.x, windowY: localWindowPos.y })
         }
       }
       applyPetWindowLanguage(settings.language)
@@ -576,6 +598,19 @@ if (kind === 'pet') {
     syncPetStandby()
 
     void attachPositionPersistence()
+    // 拖动锚点缓存与显示器缓存预取：pointerdown 因此不必再走 IPC 现查
+    //（现查期间到达的移动会被丢弃，快甩整段失效——2026-09-10 实机定位）。
+    void primeWindowPosition()
+    void refreshMonitorRects()
+
+    // 本地兜底定位：先用 localStorage 的位置把窗口摆好，**不等服务端同步**——
+    // 服务端没起来时首帧同步永远不来，只有这份能让宠物回到上次位置；
+    // 之后 applySettings 会按本地优先再钳制一次（幂等），并把差异回推给服务端。
+    localWindowPos = readLocalWindowPos(petStorage())
+    if (localWindowPos !== null) {
+      petLog('ui', 'restore-local', { pos: localWindowPos })
+      void applyRestorePosition(localWindowPos, 'local')
+    }
 
     // 启动时同步独立托盘窗口的真实可见性（宠物窗热刷新/重启时保持角标箭头一致）。
     if (isTauri()) {

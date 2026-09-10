@@ -54,7 +54,7 @@ const ZH: Dict = {
   'pet.hint2': '选择或浏览宠物库，请到「宠物」页面。',
   'pet.choose': '去宠物页选择',
   'pet.unselected': '未选择',
-  'zoom.hint': '按住 Ctrl 并在桌宠窗口滚动鼠标滚轮，也可以调整大小。',
+  'zoom.hint': '桌宠窗口不可拉伸，也没有滚轮 / 手势缩放；宠物大小只由这里的滑块决定。',
   'wake.label': '跟随会话自动显示 / 隐藏',
   'wake.hint': '关闭时宠物保持隐藏，不随任务状态出现。',
 
@@ -176,7 +176,7 @@ const EN: Dict = {
   'pet.hint2': 'To pick or browse the library, go to the Pets page.',
   'pet.choose': 'Choose on Pets page',
   'pet.unselected': 'None selected',
-  'zoom.hint': 'Hold Ctrl and scroll on the pet window to resize it.',
+  'zoom.hint': 'The pet window is not resizable and has no wheel / gesture zoom; only this slider sets the pet size.',
   'wake.label': 'Show / hide automatically with sessions',
   'wake.hint': 'When off, the pet stays hidden regardless of task status.',
 

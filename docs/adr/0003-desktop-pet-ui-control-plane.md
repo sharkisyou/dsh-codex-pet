@@ -25,6 +25,11 @@
 - 字段：`selectedPetId`、`zoom`、`awake`
 - 平台解析：Windows `%APPDATA%`、macOS `~/Library/Application Support`、Linux `$XDG_DATA_HOME` 或 `~/.local/share`；支持 `DSH_PET_DATA_DIR` 覆盖。
 - 不迁移旧 `$DSH_HOME` 数据。
+- **断线韧性（2026-09-10 补）**：设置是"经 WS 写服务端落盘"的，链路一断更新就会丢（原先静默丢弃）。
+  现在三层兜底：丢弃写 `[ui] send-dropped` 日志 → 断线期间的设置补丁按 key 合并留槽、重连拉到
+  快照**之后**补发（记 `settings-replayed`）→ 窗口位置另存 `localStorage`（启动先用它定位，服务端
+  没起来也能回到上次位置；与本地不一致时回推一次让服务端收敛）。细节与实机验证见
+  `.scratch/pet-settings-durability/issues/02-settings-update-dropped-when-offline.md`。
 
 ### 内部 UI 控制通道
 

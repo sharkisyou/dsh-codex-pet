@@ -44,6 +44,22 @@ _Avoid_: 窗口矩形（透明边距会算成可见）, 像素级不透明外接
 防宠物拖出屏幕丢失的位置约束，纯函数在 `window-clamp.ts`。边界是显示器**完整边界**（含任务栏，宠物允许坐任务栏），多显示器取并集。分两档：**软钳制**（拖动中）至少一半精灵留在并集内、允许贴边半露但不许大半藏出屏幕；**硬钳制**（启动/设置恢复）把精灵完整拉回坐标所在显示器（不命中任何屏则主显示器），治愈分辨率变更/拔屏后的旧档。
 _Avoid_: 工作区钳制（会禁止坐任务栏）, 窗口级钳制（透明边距导致"可见"误判）, 32px 可见条（旧方案，用户实测后否决）
 
+**拖动锚点 (Drag Anchor)**:
+一次拖动开始时锚定的"窗口外框物理坐标 + 光标屏幕坐标"对，此后每帧按光标增量 `setPosition`，并按**按下序号**校验归属。锚点取自宿主的**缓存**（`onMoved` 事件维护），pointerdown 不同步走 IPC 现查——现查期间（实测中位 28ms、长尾 119ms）到达的 pointermove 会被丢弃，快甩手势会整段失效。状态机在 `drag-controller.ts`：5px 阈值、软钳制、**松手先同步补最后一帧再清状态**。
+_Avoid_: 拖动阈值, 拖动起点, 窗口位置现查
+
+**宠物面 (Pet Surface)**:
+允许起拖的"宠物本体"命中面 = 精灵元素 `#pet` ∪ 待机剪影 `#pet-standby`，判定在 `pet-drag-surface.ts` 的 `isPetSurfaceTarget`（`Element.contains`，宠物面内的子元素自动算本体）。宠物窗是 345×356 的矩形而精灵只占中间 216×234，四周透明边距在 DOM 里同样命中 `.pet-stage`——**不判定就等于整窗都能拖**（2026-09-10 用户实测："拖宠物旁边的空白区，宠物也跟着动"）。与 `cursor: grab`、右键菜单的命中区保持一致；拖动中的指针捕获仍挂在 stage 上（只判起点，不拦 move/up）。
+_Avoid_: 整窗拖动热区, 不透明像素 bbox（那是点击穿透的取舍，见 `.scratch/pet-clickthrough/`）, 窗口矩形命中
+
+**宠物窗尺寸 (Pet Window Size)**:
+宠物窗尺寸**只由设置里的 `zoom` 决定**：设置窗「缩放」滑块 → 服务端 → 广播 → 宠物窗 `applyZoom` 的 `setSize`。宠物窗自身既**不可拉伸**（`tauri.conf.json` 的 `resizable: false`，没有 `WS_THICKFRAME` 那圈隐形拉伸手柄），也**没有滚轮/双指手势缩放**（2026-09-10 用户拍板移除）——既防误触改大小，也让窗口边缘的按下不再被 OS 抢去改尺寸、而是正常起拖。
+_Avoid_: Ctrl+滚轮缩放（已移除）, 可拖边拉伸的宠物窗, 手改窗口尺寸
+
+**位置存档 (Position Persistence)**:
+窗口位置的三层落盘：**服务端 `settings.json` 是权威**（经 WS `settings/update` 写入，设置窗与宠物窗共用）；断线时 `ui-client` 把最后一笔设置补丁**按 key 合并留槽**、重连拉到全量快照**之后**补发（`settings-replayed`，顺序不能反，否则被旧快照覆盖）；宠物窗另存一份 `localStorage`（`pet-position-cache.ts`）作为**本地兜底**——启动先用它定位（服务端没起来也能回到上次位置），与本地不一致时回推一次让服务端收敛。丢弃与补发都有日志（`send-dropped` / `settings-replayed` / `position-reconciled`）。
+_Avoid_: 只落 localStorage（服务端才是权威）, 静默丢弃（已修，有日志）, 靠重启恢复（不解决丢写）
+
 ## 外观与语言（方案要点）
 
 - **模型**：模式（系统/深色/浅色）+ 深色侧主题 + 浅色侧主题三件套各自持久化（`themeMode / darkTheme / lightTheme`），语言为 `language` 字段；非法值 sanitize 回退默认（system / graphite / classic / system），旧 settings.json 向后兼容。

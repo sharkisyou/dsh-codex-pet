@@ -11,8 +11,21 @@ import { DEFAULT_PORT, PROTOCOL_VERSION } from '@yshark/pet-protocol'
 import type { AppStateSnapshot, ActivitySnapshot, TrayItemSnapshot } from './controller.js'
 import type { ParsedPet } from '@yshark/pet-core'
 import type { MarketPet } from './market-types.js'
+import { petLog } from './pet-log.js'
 
 export const UI_PATH = '/v1/ui'
+
+/** 重连后等快照的上限：到点仍未收到就照常补发（正常情况 1 帧内到）。 */
+const SNAPSHOT_FALLBACK_MS = 2000
+
+/** 取消息的 `kind`，仅供日志使用（非对象/无 kind 返回 'unknown'）。 */
+function messageKind(message: unknown): string {
+  if (message !== null && typeof message === 'object' && 'kind' in message) {
+    const kind = (message as { kind?: unknown }).kind
+    if (typeof kind === 'string') return kind
+  }
+  return 'unknown'
+}
 
 export interface UiClientHandlers {
   onState?(state: AppStateSnapshot): void
@@ -98,6 +111,15 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let reconnectAttempt = 0
   const reconnectEnabled = options.reconnect !== false
+  /**
+   * 断线期间被丢弃的设置补丁（**按 key 的 last-write-wins**）。重连时先拉快照、
+   * 等快照到达后再补发——顺序反了会被服务端的旧快照覆盖回去（gateway 的
+   * `handleMessage` 对同一条连接上的消息是并发处理的，快照可能晚于补丁广播）。
+   */
+  let pendingSettingsPatch: Record<string, unknown> | null = null
+  /** 已请求快照、正在等它到达（重连补发的前置条件）。 */
+  let awaitingSnapshot = false
+  let snapshotFallbackTimer: ReturnType<typeof setTimeout> | null = null
 
   function emitStatus(): void {
     handlers.onStatus?.(connected)
@@ -119,6 +141,16 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
       connected = true
       reconnectAttempt = 0
       emitStatus()
+      // 先要全量快照；快照到达后（markSnapshotArrived）再补发断线期间的设置补丁。
+      awaitingSnapshot = true
+      if (snapshotFallbackTimer !== null) clearTimeout(snapshotFallbackTimer)
+      snapshotFallbackTimer = setTimeout(() => {
+        snapshotFallbackTimer = null
+        if (!awaitingSnapshot) return
+        petLog('ui', 'snapshot-timeout', { waitedMs: SNAPSHOT_FALLBACK_MS, pending: pendingSettingsPatch !== null })
+        awaitingSnapshot = false
+        flushPendingSettings('timeout')
+      }, SNAPSHOT_FALLBACK_MS)
       // Ask for the full snapshot on connect; the gateway also sends one
       // automatically, but this makes reconnects deterministic.
       send({ kind: 'state/get' })
@@ -139,9 +171,36 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
       if (current !== socket) return
       socket = null
       connected = false
+      // 这一轮的快照等待作废；待补发补丁留在槽里，下次重连再走一遍。
+      awaitingSnapshot = false
+      if (snapshotFallbackTimer !== null) {
+        clearTimeout(snapshotFallbackTimer)
+        snapshotFallbackTimer = null
+      }
       emitStatus()
       scheduleReconnect()
     }
+  }
+
+  /** 补发断线期间攒下的设置补丁；只有真正送达才清槽（发送再失败就留着下次重连）。 */
+  function flushPendingSettings(reason: 'snapshot' | 'timeout'): void {
+    if (pendingSettingsPatch === null) return
+    const patch = pendingSettingsPatch
+    if (send({ kind: 'settings/update', patch })) {
+      pendingSettingsPatch = null
+      petLog('ui', 'settings-replayed', { reason, patch })
+    }
+  }
+
+  /** 收到全量快照（`state` / `state-sync`）——此刻补发补丁，晚于快照就不会被旧值覆盖。 */
+  function markSnapshotArrived(): void {
+    if (!awaitingSnapshot) return
+    awaitingSnapshot = false
+    if (snapshotFallbackTimer !== null) {
+      clearTimeout(snapshotFallbackTimer)
+      snapshotFallbackTimer = null
+    }
+    flushPendingSettings('snapshot')
   }
 
   function scheduleReconnect(): void {
@@ -162,6 +221,7 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
         handlers.onState?.(state)
         handlers.onActivities?.(state.activities ?? [])
         handlers.onTray?.(state.tray ?? state.activities ?? [])
+        markSnapshotArrived()
         break
       }
       case 'state-sync':
@@ -175,6 +235,7 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
         })
         handlers.onActivities?.(message.activities ?? [])
         handlers.onTray?.(message.tray ?? message.activities ?? [])
+        markSnapshotArrived()
         break
       case 'settings':
         handlers.onSettings?.(message.settings)
@@ -241,11 +302,19 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
   }
 
   function send(message: unknown): boolean {
-    if (socket === null || socket.readyState !== WebSocket.OPEN) return false
+    if (socket === null || socket.readyState !== WebSocket.OPEN) {
+      // 断线时静默丢弃会让"改了设置却没了"无从解释——先让它可见（含 CONNECTING）。
+      petLog('ui', 'send-dropped', {
+        kind: messageKind(message),
+        readyState: socket === null ? null : socket.readyState,
+      })
+      return false
+    }
     try {
       socket.send(JSON.stringify(message))
       return true
-    } catch {
+    } catch (error) {
+      petLog('ui', 'send-failed', { kind: messageKind(message), error: String(error) })
       return false
     }
   }
@@ -254,8 +323,18 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
     send({ kind: 'state/get' })
   }
 
+  /**
+   * 更新设置：送达即清空待补发槽；未送达则按 key 合并进槽位（last-write-wins），
+   * 等重连拉到快照后补发。送达时用**合并后的 patch** 发送，避免"旧槽里没送到的 key
+   * 因为新 patch 送达而被清掉"。
+   */
   function updateSettings(patch: Record<string, unknown>): void {
-    send({ kind: 'settings/update', patch })
+    const merged = { ...(pendingSettingsPatch ?? {}), ...patch }
+    if (send({ kind: 'settings/update', patch: merged })) {
+      pendingSettingsPatch = null
+      return
+    }
+    pendingSettingsPatch = merged
   }
 
   function reloadLibrary(): void {
@@ -324,6 +403,11 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
     closed = true
     if (reconnectTimer !== null) clearTimeout(reconnectTimer)
     reconnectTimer = null
+    awaitingSnapshot = false
+    if (snapshotFallbackTimer !== null) {
+      clearTimeout(snapshotFallbackTimer)
+      snapshotFallbackTimer = null
+    }
     const current = socket
     socket = null
     if (current !== null) {

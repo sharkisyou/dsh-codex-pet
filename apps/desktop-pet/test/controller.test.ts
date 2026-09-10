@@ -76,6 +76,17 @@ function findMessage<T = any>(socket: FakeSocket, kind: string): T | undefined {
   return socket.sent.find((m: any) => m.kind === kind) as T | undefined
 }
 
+/** 轮询等某类消息到达：首帧快照要现读宠物库，满负载（全量测试并行）下可能超过固定睡眠。 */
+async function waitForMessage<T = any>(socket: FakeSocket, kind: string, timeoutMs = 2000): Promise<T> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const found = findMessage<T>(socket, kind)
+    if (found !== undefined) return found
+    if (Date.now() > deadline) throw new Error(`等待 ${kind} 消息超时（${timeoutMs}ms）`)
+    await new Promise((r) => setTimeout(r, 5))
+  }
+}
+
 async function createHarness() {
   const libraryRoot = await makeTempDir()
   const dataDir = await makeTempDir()
@@ -95,8 +106,7 @@ test('gateway sends a full state snapshot on connect', async () => {
   try {
     const ui = new FakeSocket()
     h.gateway.handleConnection(ui)
-    await new Promise((r) => setTimeout(r, 30))
-    const state = findMessage<any>(ui, 'state')
+    const state = await waitForMessage<any>(ui, 'state')
     assert.ok(state)
     assert.equal(state.state.settings.selectedPetId, null)
     assert.deepEqual(state.state.pets.map((p: any) => p.id), ['cat', 'panda'])
