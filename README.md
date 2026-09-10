@@ -83,10 +83,12 @@ cp target/x86_64-pc-windows-gnu/release/{desktop-pet.exe,WebView2Loader.dll} \
 ```sh
 cd apps/desktop-pet
 npm run build                    # 重建前端 dist（release 会嵌入二进制）
-cd src-tauri && cargo build --release
+cd src-tauri && cargo build --release --features tauri/custom-protocol
 cd .. && npm run server          # 另开终端：pet server（数据源）
 ./src-tauri/target/release/desktop-pet
 ```
+
+- **必须带 `--features tauri/custom-protocol`**，否则 release 同样不嵌 dist、走 devUrl，Vite 没跑就是空白窗口（与上方 Windows 配方同一坑）。
 
 前置系统库（Ubuntu）：`libwebkit2gtk-4.1-dev`、`libgtk-3-dev`、`libayatana-appindicator3-dev`。
 
