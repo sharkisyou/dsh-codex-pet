@@ -7,6 +7,8 @@ use tauri::{
     Manager,
 };
 
+mod dsh_focus;
+
 /// 设置窗口的标签（与前端 invoke 约定一致）。
 const SETTINGS_WINDOW_LABEL: &str = "settings";
 /// 活动托盘窗口的标签（独立窗口，不覆盖宠物窗口）。
@@ -121,142 +123,16 @@ fn toggle_tray_window(app: tauri::AppHandle) -> Result<bool, String> {
     set_tray_window_visible(app, !visible)
 }
 
-/// 托盘打开会话后把承载 DSH GUI 的浏览器窗口还原并置顶。
+/// 托盘打开会话后把承载 DSH GUI 的浏览器窗口/标签页带到前台。
 ///
-/// 会话切换发生在网页内部（client sessions.open），但浏览器可能被最小化或
-/// 置于后台；这里扫描常见浏览器的顶层窗口做层叠匹配：
-/// ① 标题同时含 “deepseek” 与会话标题 → 精确聚焦该窗口；
-/// ② 没有则退回所有标题含 “deepseek” 的窗口；
-/// ③ 仍没有 → 用默认浏览器打开 GUI 地址（持久 cookie 已认证，可直开）。
-///
-/// 纯 Win32 实现（枚举窗口 + ShellExecuteW 开 URL）：不派生子进程——
-/// GUI 进程派生控制台子进程（powershell）会让 Windows 新建控制台窗口，
-/// 每次点击都肉眼可见地闪一下终端；也不再有数百毫秒的运行时冷启动。
-#[cfg(windows)]
+/// 实现见 `dsh_focus`（纯逻辑与 Win32/UIA 分离，`examples/focus_probe.rs`
+/// 复用同一份实现做端到端验证）。这里只是 Tauri 命令外壳：UIA 要跨进程读浏览器
+/// 的标签页，浏览器忙时可能耗时数百毫秒，放工作线程里跑，别卡住 UI 线程。
 #[tauri::command]
 fn focus_dsh_gui(title: Option<String>) -> Result<(), String> {
-    use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::Foundation::HWND;
-    use windows_sys::Win32::System::Threading::{
-        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
-        PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-    use windows_sys::Win32::UI::Shell::ShellExecuteW;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-        SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOWNORMAL,
-    };
-
-    /// 只认常见浏览器的进程映像名（与旧 PowerShell 实现的名单一致），
-    /// 避免把标题碰巧含 “deepseek” 的资源管理器/编辑器窗口误判为 DSH GUI。
-    const BROWSERS: [&str; 6] = [
-        "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe",
-    ];
-    unsafe fn process_image_name(pid: u32) -> String {
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if handle.is_null() {
-            return String::new();
-        }
-        let mut buf = [0u16; 1024];
-        let mut len = buf.len() as u32;
-        let ok = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, buf.as_mut_ptr(), &mut len);
-        CloseHandle(handle);
-        if ok == 0 {
-            return String::new();
-        }
-        String::from_utf16_lossy(&buf[..len as usize]).to_lowercase()
-    }
-    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: isize) -> i32 {
-        let matches = &mut *(lparam as *mut Vec<(isize, String)>);
-        if IsWindowVisible(hwnd) == 0 {
-            return 1;
-        }
-        let mut title = [0u16; 512];
-        let len = GetWindowTextW(hwnd, title.as_mut_ptr(), 512);
-        if len == 0 {
-            return 1;
-        }
-        let title_lower = String::from_utf16_lossy(&title[..len as usize]).to_lowercase();
-        if !title_lower.contains("deepseek") {
-            return 1;
-        }
-        let mut pid = 0u32;
-        GetWindowThreadProcessId(hwnd, &mut pid);
-        if pid == 0 {
-            return 1;
-        }
-        let image = process_image_name(pid);
-        if BROWSERS.iter().any(|b| image.ends_with(b)) {
-            matches.push((hwnd as isize, title_lower));
-        }
-        1
-    }
-    fn wide(s: &str) -> Vec<u16> {
-        s.encode_utf16().chain(std::iter::once(0)).collect()
-    }
-
-    unsafe {
-        let mut matches: Vec<(isize, String)> = Vec::new();
-        EnumWindows(Some(enum_proc), &mut matches as *mut _ as isize);
-        // 层叠匹配：优先「DeepSeek + 会话标题」都在标题里的窗口；没有则退回
-        // 所有 DeepSeek 窗口（网页切会话不保证同步改标签标题）。
-        let needle = title
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_lowercase);
-        let targets: Vec<isize> = match &needle {
-            Some(needle) => {
-                let exact: Vec<isize> = matches
-                    .iter()
-                    .filter(|(_, t)| t.contains(needle))
-                    .map(|(h, _)| *h)
-                    .collect();
-                if exact.is_empty() {
-                    matches.iter().map(|(h, _)| *h).collect()
-                } else {
-                    exact
-                }
-            }
-            None => matches.iter().map(|(h, _)| *h).collect(),
-        };
-        if targets.is_empty() {
-            // 没有已认证的浏览器窗口：用默认浏览器打开 DSH GUI。
-            // ShellExecuteW 由 shell 处理，不经子进程，无控制台闪现。
-            let verb = wide("open");
-            let url = wide("http://127.0.0.1:3080/");
-            ShellExecuteW(
-                std::ptr::null_mut(),
-                verb.as_ptr(),
-                url.as_ptr(),
-                std::ptr::null(),
-                std::ptr::null(),
-                SW_SHOWNORMAL as i32,
-            );
-            return Ok(());
-        }
-        for hwnd in targets {
-            let hwnd = hwnd as HWND;
-            // 仅最小化时还原：最大化中的浏览器保持最大化（旧实现无条件
-            // SW_RESTORE 会把最大化浏览器打回小窗）。
-            if IsIconic(hwnd) != 0 {
-                ShowWindow(hwnd, SW_RESTORE);
-            }
-            SetForegroundWindow(hwnd);
-        }
-    }
-    Ok(())
-}
-
-/// 非 Windows 平台的降级实现：无法枚举/聚焦窗口，退化为 Windows 实现的
-/// 分支③——用默认浏览器打开 DSH GUI（持久 cookie 已认证，可直开）。
-/// xdg-open 由桌面会话提供，spawn 失败（无桌面环境）时静默忽略。
-#[cfg(not(windows))]
-#[tauri::command]
-fn focus_dsh_gui(_title: Option<String>) -> Result<(), String> {
-    let _ = std::process::Command::new("xdg-open")
-        .arg("http://127.0.0.1:3080/")
-        .spawn();
+    std::thread::spawn(move || {
+        let _ = dsh_focus::focus_dsh_gui(title, true);
+    });
     Ok(())
 }
 

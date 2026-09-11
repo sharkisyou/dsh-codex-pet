@@ -87,6 +87,27 @@ cp target/x86_64-pc-windows-gnu/release/desktop-pet.exe \
     旧实例未退出时新实例会"秒退"，先关旧实例再启动。
 - **release 打包**：正式安装包用 `tauri build`（去掉 `--debug`），或配置 GitHub Actions `windows-latest` runner 自动构建。
 
+### 托盘会话聚焦（Windows，2026-09-11 起用 UI Automation）
+
+> 实现：`apps/desktop-pet/src-tauri/src/dsh_focus.rs`；端到端验证环与夹具见
+> [`.scratch/desktop-pet-tests/focus-dsh-gui/README.md`](.scratch/desktop-pet-tests/focus-dsh-gui/README.md)。
+
+- **为什么不再是「窗口标题含 deepseek」**：窗口标题只反映**活动标签页**，而 DeepSeek 官网 /
+  搜索页标签标题同样含 deepseek——用户切到那种标签页时会被误判成 GUI 窗口，点托盘只把
+  浏览器置前、**停在别的页面上**（2026-09-11 用户实测）。识别标记改为 GUI 页面标题里的
+  **产品名** `DeepSeek Harness`（`DSH_MARKER`），会话标题用于多 GUI 标签页消歧。
+- **切标签页靠 UIA**：GUI 在后台标签页时用 `IUIAutomation` 读标签页列表并
+  `SelectionItemPattern.Select()`（Chromium 实测 40–250ms；Firefox 等拿不到时退回置前窗口）。
+  UIA 是新增的 `windows` crate 依赖（本就是 tauri 的传递依赖，只多开 `Win32_UI_Accessibility`
+  等特性）；副作用是 Chromium 会因此开启辅助功能模式，属可接受成本。
+- **验证环**：`.scratch/desktop-pet-tests/focus-dsh-gui/loop.sh`——独立 `--user-data-dir` 的
+  Chrome 夹具窗口（GUI 仿真标签页 + 干扰标签页）+ 真实实现的探针（`examples/focus_probe.rs`
+  经 `#[path]` 复用生产模块），断言**活动标签页**切回 GUI。两种干扰页变体都跑通（含标题含
+  deepseek 的那种）。
+- **别用 `cargo test` 跑模块测试**：Linux 侧 `pkg-config`/`libdbus-1-dev` 缺失时连依赖都编不过；
+  用 `rustc --edition 2021 --test src/dsh_focus.rs` 或
+  `cargo test --target x86_64-pc-windows-gnu --example focus_probe`（example 目标小、跑得动）。
+
 ## Linux 桌面基本形态（2026-09-07 起支持）
 
 > 目标环境是**真 Linux 桌面**（X11 + 合成器，如 VMware Ubuntu / GNOME）。WSLg 受 RAIL 远程合成限制
@@ -100,7 +121,10 @@ cp target/x86_64-pc-windows-gnu/release/desktop-pet.exe \
   空白窗口（进程存活、WebKit 子进程齐全，但 3720 仅 LISTEN 无 ESTAB、`$HOME/dsh-pet.log` 不生成）；
   开了才是自包含，运行时不需要 Vite。
 - **运行**：先起数据面 `npm run server`（pet server 3720），再跑 `src-tauri/target/release/desktop-pet`。
-- **平台差异（cfg 门控）**：`focus_dsh_gui` 非 Windows 退化为 `xdg-open` 打开 GUI（不能聚焦既有浏览器窗口）；
+- **平台差异（cfg 门控）**：**托盘聚焦的窗口/标签页识别与切换只有 Windows 实现**
+  （`src-tauri/src/dsh_focus.rs` 的 `#[cfg(windows)]` 分支：Win32 枚举 + UI Automation）；
+  非 Windows 仍是 `xdg-open` 打开 GUI 地址——既不能聚焦既有浏览器窗口，也不会切到 GUI 标签页
+  （Linux 对齐需 X11 EWMH 找窗口 + AT-SPI 选标签页，且本机 WSL 没有可测的真 X11 桌面）。
   日志落 `$HOME/dsh-pet.log`（Windows 仍是 `%USERPROFILE%`）；系统托盘走 libayatana-appindicator
   （GNOME 需 AppIndicator 扩展，Ubuntu 默认带）。
 - **双平台检查**：改 Rust 代码后在 WSL 里 `cargo check`（Linux）+ `cargo check --target

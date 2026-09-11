@@ -19,6 +19,15 @@ windows-sys = { version = "0.59", features = [
   "Win32_UI_Shell",
   "Win32_System_Threading",
 ] }
+# focus_dsh_gui 用 UI Automation 读浏览器标签页（windows-sys 不含 UIA 接口）。
+# 该 crate 本就是 tauri 的传递依赖，这里只是多开几个 API 特性。
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_System_Ole",
+  "Win32_System_Variant",
+  "Win32_UI_Accessibility",
+] }
 
 [profile.release]
 strip = true

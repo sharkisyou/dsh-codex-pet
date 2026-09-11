@@ -60,6 +60,10 @@ _Avoid_: Ctrl+滚轮缩放（已移除）, 可拖边拉伸的宠物窗, 手改�
 窗口位置的三层落盘：**服务端 `settings.json` 是权威**（经 WS `settings/update` 写入，设置窗与宠物窗共用）；断线时 `ui-client` 把最后一笔设置补丁**按 key 合并留槽**、重连拉到全量快照**之后**补发（`settings-replayed`，顺序不能反，否则被旧快照覆盖）；宠物窗另存一份 `localStorage`（`pet-position-cache.ts`）作为**本地兜底**——启动先用它定位（服务端没起来也能回到上次位置），与本地不一致时回推一次让服务端收敛。丢弃与补发都有日志（`send-dropped` / `settings-replayed` / `position-reconciled`）。
 _Avoid_: 只落 localStorage（服务端才是权威）, 静默丢弃（已修，有日志）, 靠重启恢复（不解决丢写）
 
+**托盘会话聚焦 (Tray Session Focus)**:
+托盘点会话 = 网页内切换会话（`sessions.open`）**加上**把承载 GUI 的浏览器窗口/标签页带到前台，两层缺一不可（只切会话用户看不到，只置前窗口用户看到的是别的标签页）。识别 GUI 靠页面标题 `<会话标题> — DeepSeek Harness` 里的产品名标记（`dsh_focus.rs` 的 `DSH_MARKER`，会话标题用于多 GUI 标签页消歧）；**窗口标题只反映活动标签页**，所以“GUI 在后台标签页”时用 UI Automation 读标签页列表并 `SelectionItemPattern.Select()` 选中它。Windows 实现在 `src-tauri/src/dsh_focus.rs`。
+_Avoid_: 按「窗口标题含 deepseek」匹配（旧 bug 根源：DeepSeek 官网/搜索页也含它 → 误判成 GUI 窗口，只置前不切标签页）, 只置前不切标签页, 每点一次开一个新标签页
+
 ## 外观与语言（方案要点）
 
 - **模型**：模式（系统/深色/浅色）+ 深色侧主题 + 浅色侧主题三件套各自持久化（`themeMode / darkTheme / lightTheme`），语言为 `language` 字段；非法值 sanitize 回退默认（system / graphite / classic / system），旧 settings.json 向后兼容。
