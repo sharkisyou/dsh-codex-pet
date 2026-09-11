@@ -5,6 +5,7 @@ import { mountPetShell, type PetShell } from './pet-shell.js'
 import { createUiClient, type UiClient } from './ui-client.js'
 import { mountSettingsApp } from './settings-app.js'
 import { getCurrentWindow, availableMonitors, primaryMonitor } from '@tauri-apps/api/window'
+import { listen } from '@tauri-apps/api/event'
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { invoke } from '@tauri-apps/api/core'
 import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi'
@@ -637,9 +638,36 @@ if (kind === 'pet') {
 } else if (kind === 'tray') {
   void mountTrayWindow()
 } else if (kind === 'settings') {
-  if (content) {
-    let app: ReturnType<typeof mountSettingsApp> | null = null
-    const client = createUiClient({
+  mountSettingsWhenShown()
+}
+
+/**
+ * 设置窗：**显示时挂载、隐藏时卸载**。
+ *
+ * 设置窗由 `tauri.conf.json` 以 `visible:false` 预创建（为了预布局、打开即满屏、
+ * 避免创建期闪现）。整套设置 UI（DOM + WS 连接 + 3 个动画渲染器 + 本地宠物整张
+ * 精灵解码位图）很重：常驻实测渲染进程 ~107MB，空页面只要 ~15MB——所以隐藏期间
+ * 卸载（`app.dispose()` + `client.close()`），下次显示用 `settings-shown` 事件重建。
+ *
+ * 信号（都幂等，重复到达无副作用；不轮询——隐藏窗口保持零活动）：
+ *  - 主进程 `open_settings_window` 在 `show()` 之前 emit 的 `settings-shown`；
+ *  - 设置窗 `CloseRequested`（被拦成 hide）后 emit 的 `settings-hidden`；
+ *  - DOM `visibilitychange`（宿主窗口显隐变化时 Chromium 会派发），作为兜底；
+ *  - 启动时的一次 `isVisible()` 检查（开发期热重载时窗口可能已是可见的）。
+ *
+ * 代价：重新打开要重建 DOM 并重新取一次快照（几十~一百多毫秒），且市场页的
+ * 分页/搜索/滚动位置回到初始值。
+ */
+function mountSettingsWhenShown(): void {
+  const host = document.querySelector<HTMLElement>('#window-content')
+  if (!host) return
+
+  let app: ReturnType<typeof mountSettingsApp> | null = null
+  let client: UiClient | null = null
+
+  const mount = (): void => {
+    if (app !== null) return
+    const created = createUiClient({
       handlers: {
         onState(state) {
           app?.update(state)
@@ -653,6 +681,9 @@ if (kind === 'pet') {
         },
         onPet({ id, pet, spriteDataUrl }) {
           app?.setPetPayload({ id, pet, spriteDataUrl })
+        },
+        onPetThumb(payload) {
+          app?.setPetThumb(payload)
         },
         onMarketList(payload) {
           app?.setMarketPets(payload)
@@ -684,9 +715,52 @@ if (kind === 'pet') {
         },
       },
     })
-    app = mountSettingsApp(content, client)
+    // 先挂 app 再挂 UI：回调可能在挂载期间就到达（快照是一次 WS 往返）。
+    app = mountSettingsApp(host, created)
+    client = created
     ;(window as any).__desktopPetSettings = { client, app }
+    petLog('settings', 'mounted')
   }
+
+  const unmount = (): void => {
+    if (app === null) return
+    app.dispose()
+    app = null
+    ;(window as any).__desktopPetSettings = null
+    client?.close()
+    client = null
+    petLog('settings', 'unmounted')
+    // 只清 DOM 时 Chromium 仍留着渲染进程的堆（实测 ~45MB 不归还），
+    // 重载页面才能把它真正还给系统；重载发生在窗口隐藏期间，用户看不到，
+    // 下次显示时页面已就绪（监听器随 main.ts 重新注册）。等一拍让日志写完。
+    if (isTauri()) setTimeout(() => window.location.reload(), 300)
+  }
+
+  if (!isTauri()) {
+    // 浏览器预览（vite dev / 局域网预览）：页面本身就是设置窗，直接挂载。
+    mount()
+    return
+  }
+
+  const current = currentTauriWindow()
+  void current
+    ?.isVisible()
+    .then((visible) => {
+      if (visible) mount()
+    })
+    .catch(() => {
+      // 查询失败不致命：其它几条信号仍会挂载。
+    })
+  void listen('settings-shown', () => mount()).catch(() => {
+    // 事件通道不可用（权限/版本差异）时，靠可见性检查兜底。
+  })
+  void listen('settings-hidden', () => unmount()).catch(() => {
+    // 同上。
+  })
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') mount()
+    else unmount()
+  })
 }
 
 /**

@@ -8,10 +8,13 @@
  */
 
 import {
+  FALLBACK_FRAME_MS,
   ROW_FRAME_COUNTS,
   ROW_NAMES,
   cycleNext,
   frameIndex,
+  totalDuration,
+  type AnimationDefinition,
   type ParsedPet,
   type PetAnimationState,
 } from '@yshark/pet-core'
@@ -41,6 +44,39 @@ export function buildFallbackStates(atlasRows = ROWS): Record<string, PetAnimati
     }
   }
   return states
+}
+
+/** 定时唤醒的下限/上限（ms）：避免忙循环，也避免异常 timing 导致长时间不刷新。 */
+export const MIN_WAKE_MS = 4
+export const MAX_WAKE_MS = 1000
+
+/**
+ * 距离"下一帧边界"还剩多少毫秒（纯函数）。
+ *
+ * 渲染器不再用 requestAnimationFrame 每 16ms 空转：图集帧时长通常是 140ms 量级，
+ * 按边界唤醒就够（宠物窗渲染进程之前那 ~3-4% 单核占用主要来自这种空转）。
+ * 单帧动画没有边界可言，退化为 `MAX_WAKE_MS` 长睡。
+ */
+export function nextFrameDelayMs(anim: AnimationDefinition, elapsedMs: number): number {
+  const count = anim.frameCount
+  if (count <= 1) return MAX_WAKE_MS
+  const total = totalDuration(anim.timingMs, count)
+  if (total <= 0) return MAX_WAKE_MS
+  const once = anim.playback === 'once' || anim.loop === false
+  // 一次性动画已播完：render() 会切回 idle，这里长睡等下一次 setState。
+  if (once && elapsedMs >= total) return MAX_WAKE_MS
+  const pos = elapsedMs < 0 ? 0 : elapsedMs % total
+  let acc = 0
+  for (let i = 0; i < count; i++) {
+    acc += anim.timingMs?.[i] !== undefined ? (anim.timingMs as readonly number[])[i] : FALLBACK_FRAME_MS
+    if (pos < acc) return clampWake(acc - pos)
+  }
+  return clampWake(total - pos)
+}
+
+function clampWake(ms: number): number {
+  if (!Number.isFinite(ms)) return MAX_WAKE_MS
+  return Math.min(MAX_WAKE_MS, Math.max(MIN_WAKE_MS, Math.ceil(ms)))
 }
 
 export interface DomPetRendererOptions {
@@ -130,7 +166,6 @@ export function createDomPetRenderer(
   let frame = 0
   let animationStartedAt = 0
   let scale = 1
-  let raf = 0
   let interval: ReturnType<typeof setTimeout> | null = null
   let running = false
   let lastClickSkill: string | null = null
@@ -259,30 +294,28 @@ export function createDomPetRenderer(
     return next
   }
 
+  /** 下一次唤醒的间隔：显式 frameRate 优先，否则按当前动画的下一帧边界。 */
+  function nextDelay(): number {
+    if (frameRate > 0) return frameRate
+    const anim = states[stateName] ?? states.idle
+    if (!anim) return MAX_WAKE_MS
+    return nextFrameDelayMs(anim, performance.now() - animationStartedAt)
+  }
+
   function tick(): void {
     if (!running) return
     render()
-    if (frameRate > 0) {
-      interval = setTimeout(tick, frameRate) as unknown as ReturnType<typeof setTimeout>
-    } else {
-      raf = requestAnimationFrame(tick)
-    }
+    interval = setTimeout(tick, nextDelay()) as unknown as ReturnType<typeof setTimeout>
   }
 
   function start(): void {
     if (running) return
     running = true
-    if (frameRate > 0) {
-      tick()
-    } else if (typeof requestAnimationFrame === 'function') {
-      raf = requestAnimationFrame(tick)
-    }
+    tick()
   }
 
   function stop(): void {
     running = false
-    if (raf !== 0 && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf)
-    raf = 0
     if (interval !== null) {
       clearTimeout(interval)
       interval = null

@@ -11,6 +11,7 @@ import type { ParsedPet, SessionStoreActivity } from '@yshark/pet-core'
 
 import type { PetServer } from './server.js'
 import type { PetLibrary, PetLibraryEntry, LoadedPetPackage } from './pet-library.js'
+import { spriteThumbDataUrl } from './pet-thumbnail.js'
 import type { PetSettings, SettingsStore } from './settings-store.js'
 import { ZOOM_MAX, ZOOM_MIN, sanitizeSettings } from './settings-store.js'
 
@@ -72,6 +73,8 @@ export interface AppController {
   listPets(): Promise<PetLibraryEntry[]>
   reloadLibrary(): Promise<PetLibraryEntry[]>
   loadPet(id: string): Promise<LoadedPetPackage | null>
+  /** 本地宠物卡片缩略图（96×104 webp data URL）。 */
+  petThumbnail(id: string): Promise<string | null>
   getSettings(): PetSettings
   updateSettings(patch: Partial<PetSettings>): Promise<{ ok: true; settings: PetSettings } | { ok: false; error: string }>
   stateSnapshot(): Promise<AppStateSnapshot>
@@ -115,6 +118,9 @@ export function createAppController(options: AppControllerOptions): AppControlle
   // 单机宠物库通常 <60 只，上限取 60 足够覆盖正常使用。
   const PET_CACHE_MAX = Math.max(1, petCacheMax)
   const petCache = new Map<string, LoadedPetPackage>()
+  // 本地宠物缩略图缓存（~9KB/条）：卡片只请求小图，和整张精灵的 petCache 分开。
+  const THUMB_CACHE_MAX = 256
+  const thumbCache = new Map<string, string>()
   let petListCache: PetLibraryEntry[] | null = null
   let disposed = false
 
@@ -245,6 +251,37 @@ export function createAppController(options: AppControllerOptions): AppControlle
     return result.value
   }
 
+  /**
+   * 本地宠物卡片缩略图（96×104 webp data URL，~9KB）。
+   *
+   * 卡片以前直接用**整张精灵**当缩略图（解码后 ~11MB/张），5 只本地宠物就把
+   * 设置窗渲染进程堆顶到 ~100MB。这里走 `library.loadSpriteBuffer`（不转
+   * base64、不进整张精灵 LRU）+ 小 LRU 缓存，服务端与渲染进程都只留小图。
+   */
+  async function petThumbnail(id: string): Promise<string | null> {
+    const cached = thumbCache.get(id)
+    if (cached !== undefined) {
+      thumbCache.delete(id)
+      thumbCache.set(id, cached)
+      return cached
+    }
+    const result = await library.loadSpriteBuffer(id)
+    if (!result.ok) return null
+    try {
+      const dataUrl = await spriteThumbDataUrl(result.value.bytes)
+      thumbCache.set(id, dataUrl)
+      while (thumbCache.size > THUMB_CACHE_MAX) {
+        const oldest = thumbCache.keys().next().value
+        if (oldest === undefined) break
+        thumbCache.delete(oldest)
+      }
+      return dataUrl
+    } catch {
+      // 图集损坏/格式不支持时静默留空，卡片显示占位样式。
+      return null
+    }
+  }
+
   function getSettings(): PetSettings {
     return store.get()
   }
@@ -303,6 +340,7 @@ export function createAppController(options: AppControllerOptions): AppControlle
     listPets,
     reloadLibrary,
     loadPet,
+    petThumbnail,
     getSettings,
     updateSettings,
     stateSnapshot,

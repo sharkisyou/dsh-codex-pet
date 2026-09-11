@@ -33,6 +33,8 @@ export interface UiClientHandlers {
   onSettings?(settings: AppStateSnapshot['settings']): void
   onPets?(pets: AppStateSnapshot['pets']): void
   onPet?(pet: { id: string; pet: ParsedPet; spriteDataUrl: string; atlasRows: number }): void
+  /** 本地宠物卡片缩略图（96×104 webp data URL；生成失败为 null）。 */
+  onPetThumb?(payload: { id: string; dataUrl: string | null }): void
   onAgents?(agents: string[]): void
   onActivity?(activity: ActivitySnapshot): void
   onActivities?(activities: TrayItemSnapshot[]): void
@@ -66,6 +68,8 @@ export interface UiClient {
   updateSettings(patch: Record<string, unknown>): void
   reloadLibrary(): void
   requestPet(id: string): void
+  /** 请求本地宠物卡片缩略图（小图；整张精灵仍走 requestPet）。 */
+  requestPetThumb(id: string): void
   requestActivities(): void
   markActivityRead(agent: string, sessionId: string): void
   markRead(agent: string, sessionId: string): void
@@ -251,6 +255,9 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
           atlasRows: message.atlasRows,
         })
         break
+      case 'pet-thumb':
+        handlers.onPetThumb?.({ id: message.id, dataUrl: typeof message.dataUrl === 'string' ? message.dataUrl : null })
+        break
       case 'agents':
         handlers.onAgents?.(message.agents ?? [])
         break
@@ -345,6 +352,10 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
     send({ kind: 'pet/get', id })
   }
 
+  function requestPetThumb(id: string): void {
+    send({ kind: 'pet/thumb', id })
+  }
+
   function requestActivities(): void {
     send({ kind: 'activities/get' })
   }
@@ -434,6 +445,7 @@ export function createUiClient(options: UiClientOptions = {}): UiClient {
     updateSettings,
     reloadLibrary,
     requestPet,
+    requestPetThumb,
     requestActivities,
     markActivityRead,
     markRead,

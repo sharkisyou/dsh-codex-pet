@@ -44,6 +44,18 @@ export interface LoadedPetPackage {
   spriteDataUrl: string
 }
 
+/** 图集原始字节 + 尺寸（缩略图生成用；不含 base64 与动画解析）。 */
+export interface PetSpriteBuffer {
+  id: string
+  spriteName: string
+  petJsonText: string
+  bytes: Uint8Array
+  mime: string
+  width: number
+  height: number
+  atlasRows: number
+}
+
 export type PetLibraryResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: string }
@@ -74,6 +86,8 @@ export interface PetLibrary {
   readonly root: string
   listPets(): Promise<PetLibraryResult<PetLibraryEntry[]>>
   loadPet(id: string): Promise<PetLibraryResult<LoadedPetPackage>>
+  /** 只读图集原始字节（缩略图生成用，不转 base64、不解析动画）。 */
+  loadSpriteBuffer(id: string): Promise<PetLibraryResult<PetSpriteBuffer>>
   hasPet(id: string): Promise<boolean>
 }
 
@@ -189,58 +203,95 @@ export function createPetLibrary(options: PetLibraryOptions = {}): PetLibrary {
     }
   }
 
+  /**
+   * 图集读取的公共部分：定位宠物包 → 校验 → 读出原始字节与尺寸。
+   * 校验失败以 `ok:false` 返回（错误文案与历史一致），IO 错误照常抛出。
+   */
+  async function readSprite(fs: PetFileSystemLike, id: string): Promise<PetLibraryResult<PetSpriteBuffer>> {
+    const dir = `${root}/${id}`
+    const files = await fs.readdir(dir)
+    const fileNames = files.map((f) => typeof f === 'string' ? f : f.name)
+    const assessed = assessPackageDir(fileNames)
+    if (!assessed.valid) {
+      return { ok: false, error: assessed.reason ?? '宠物包不完整' }
+    }
+
+    const text = decodeText(await fs.readFile(`${dir}/pet.json`))
+    const rawJson = JSON.parse(text) as Record<string, unknown>
+    const rawSpriteName = typeof rawJson.spritesheetPath === 'string' && rawJson.spritesheetPath !== ''
+      ? rawJson.spritesheetPath
+      : fileNames.find((name) => IMAGE_EXTS.some((ext) => name.toLowerCase().endsWith(ext))) ?? ''
+    if (!isSafeSpriteName(rawSpriteName)) return { ok: false, error: '非法图集路径' }
+    const spriteName = rawSpriteName
+    if (spriteName === '') return { ok: false, error: '缺少图集文件' }
+
+    const spritePath = `${dir}/${spriteName}`
+    const bytes = await fs.readFile(spritePath)
+    const byteLength = typeof bytes === 'string' ? Buffer.byteLength(bytes) : bytes.byteLength ?? bytes.length
+    if (byteLength > maxSpriteBytes) {
+      return { ok: false, error: '图集文件过大' }
+    }
+    const uint8 = typeof bytes === 'string'
+      ? new TextEncoder().encode(bytes)
+      : (bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes as ArrayLike<number>))
+    const dims = imageDims(uint8)
+    if (dims === null) return { ok: false, error: '图集不是支持的图片格式（PNG/WebP）' }
+    if (dims.width % CELL_W !== 0 || dims.height % CELL_H !== 0 || dims.width / CELL_W !== 8) {
+      return { ok: false, error: `图集尺寸不支持: ${dims.width}x${dims.height}` }
+    }
+    const atlasRows = Math.floor(dims.height / CELL_H)
+    if (atlasRows <= 0) return { ok: false, error: '图集行数无效' }
+
+    return {
+      ok: true,
+      value: {
+        id,
+        spriteName,
+        petJsonText: text,
+        bytes: uint8,
+        mime: spriteMime(spriteName),
+        width: dims.width,
+        height: dims.height,
+        atlasRows,
+      },
+    }
+  }
+
   async function loadPet(id: string): Promise<PetLibraryResult<LoadedPetPackage>> {
     if (!isSafePetId(id)) return { ok: false, error: '非法宠物 id' }
     try {
       return await withFs(async (fs) => {
-        const dir = `${root}/${id}`
-        const files = await fs.readdir(dir)
-        const fileNames = files.map((f) => typeof f === 'string' ? f : f.name)
-        const assessed = assessPackageDir(fileNames)
-        if (!assessed.valid) {
-          return { ok: false, error: assessed.reason ?? '宠物包不完整' }
-        }
-
-        const text = decodeText(await fs.readFile(`${dir}/pet.json`))
-        const rawJson = JSON.parse(text) as Record<string, unknown>
-        const rawSpriteName = typeof rawJson.spritesheetPath === 'string' && rawJson.spritesheetPath !== ''
-          ? rawJson.spritesheetPath
-          : fileNames.find((name) => IMAGE_EXTS.some((ext) => name.toLowerCase().endsWith(ext))) ?? ''
-        if (!isSafeSpriteName(rawSpriteName)) return { ok: false, error: '非法图集路径' }
-        const spriteName = rawSpriteName
-        if (spriteName === '') return { ok: false, error: '缺少图集文件' }
-
-        const spritePath = `${dir}/${spriteName}`
-        const bytes = await fs.readFile(spritePath)
-        const byteLength = typeof bytes === 'string' ? Buffer.byteLength(bytes) : bytes.byteLength ?? bytes.length
-        if (byteLength > maxSpriteBytes) {
-          return { ok: false, error: '图集文件过大' }
-        }
-        const uint8 = typeof bytes === 'string'
-          ? new TextEncoder().encode(bytes)
-          : (bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes as ArrayLike<number>))
-        const dims = imageDims(uint8)
-        if (dims === null) return { ok: false, error: '图集不是支持的图片格式（PNG/WebP）' }
-        if (dims.width % CELL_W !== 0 || dims.height % CELL_H !== 0 || dims.width / CELL_W !== 8) {
-          return { ok: false, error: `图集尺寸不支持: ${dims.width}x${dims.height}` }
-        }
-        const atlasRows = Math.floor(dims.height / CELL_H)
-        if (atlasRows <= 0) return { ok: false, error: '图集行数无效' }
-        const parsed = parsePetJson(text, atlasRows)
+        const sprite = await readSprite(fs, id)
+        if (!sprite.ok) return sprite
+        const parsed = parsePetJson(sprite.value.petJsonText, sprite.value.atlasRows)
         if (!parsed.ok) return { ok: false, error: parsed.errors.join('; ') }
-
-        const mime = spriteMime(spriteName)
-        const base64 = bytesToBase64(uint8)
+        const base64 = bytesToBase64(sprite.value.bytes)
         return {
           ok: true,
           value: {
             id,
             pet: parsed.pet,
-            atlasRows,
-            spriteDataUrl: `data:${mime};base64,${base64}`,
+            atlasRows: sprite.value.atlasRows,
+            spriteDataUrl: `data:${sprite.value.mime};base64,${base64}`,
           },
         }
       })
+    } catch (error) {
+      const code = (error as { code?: string }).code
+      if (code === 'ENOENT') return { ok: false, error: '宠物不存在' }
+      return { ok: false, error: `读取宠物失败: ${listError(error)}` }
+    }
+  }
+
+  /**
+   * 只读图集原始字节（**不**转 base64、**不**解析动画、不进 controller 的
+   * 整张精灵 LRU）。缩略图生成走这条路，避免为了 96×104 的小图把 ~11MB 的
+   * 整图解进内存。
+   */
+  async function loadSpriteBuffer(id: string): Promise<PetLibraryResult<PetSpriteBuffer>> {
+    if (!isSafePetId(id)) return { ok: false, error: '非法宠物 id' }
+    try {
+      return await withFs((fs) => readSprite(fs, id))
     } catch (error) {
       const code = (error as { code?: string }).code
       if (code === 'ENOENT') return { ok: false, error: '宠物不存在' }
@@ -257,6 +308,7 @@ export function createPetLibrary(options: PetLibraryOptions = {}): PetLibrary {
     root,
     listPets,
     loadPet,
+    loadSpriteBuffer,
     hasPet,
   }
 }

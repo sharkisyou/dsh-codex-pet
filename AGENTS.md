@@ -73,7 +73,8 @@ cp target/x86_64-pc-windows-gnu/release/desktop-pet.exe \
   现成脚本 `C:\Users\HM\cap-pet.ps1`，按尺寸特征定位宠物窗口）。视觉验证用
   `~/.dsh/skills/opencode-vision/glm-vision.py "<提示词>" <截图路径>`（GLM 5.3 flash）。
   运行日志三处对照：桥接 `~/.dsh/logs/pet-bridge.log`、pet server `~/.dsh/logs/pet-server.log`、
-  前端 UI 事件 `%USERPROFILE%\dsh-pet.log`（petLog 落盘）。
+  前端 UI 事件 `%USERPROFILE%\dsh-pet.log`（petLog 落盘；Rust 侧常驻句柄 + 超 2MB 轮转为 `.old`，
+  前端按行去重，重复行行尾记 `×N`）。验证设置窗路径（懒挂载/事件）时看日志里的 `[settings] mounted`。
 - **MinGW 交叉编译（2026-09-07 起主力，配方见上方构建与部署）**：WSL 直接把 src-tauri 编成 Windows exe，
   实测正常运行、图标嵌入、自包含（custom-protocol）。一次性准备：`sudo apt install mingw-w64` +
   `rustup target add x86_64-pc-windows-gnu` + `.cargo/config.toml` 链接器配置（见前置条件）。

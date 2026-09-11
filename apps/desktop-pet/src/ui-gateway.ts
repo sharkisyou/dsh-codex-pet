@@ -38,6 +38,7 @@ export type UiClientMessage =
   | { kind: 'market/uninstall'; slug: string }
   | { kind: 'market/thumb'; pet: MarketPet }
   | { kind: 'market/pet'; pet: MarketPet }
+  | { kind: 'pet/thumb'; id: string }
 
 export type UiServerMessage =
   | { kind: 'state'; state: AppStateSnapshot }
@@ -50,6 +51,7 @@ export type UiServerMessage =
   | { kind: 'tray'; tray: AppStateSnapshot['tray'] }
   | { kind: 'allActivities'; allActivities: AppStateSnapshot['allActivities'] }
   | { kind: 'pet'; id: string; pet: ParsedPet; spriteDataUrl: string; atlasRows: number }
+  | { kind: 'pet-thumb'; id: string; dataUrl: string | null }
   | { kind: 'market/list'; pets: MarketPet[]; total: number; page: number; pageSize: number; kinds: string[] }
   | { kind: 'market/list-error'; message: string }
   | { kind: 'market/installed'; pet: { id: string; displayName: string; sourceDir: string } }
@@ -321,6 +323,17 @@ export function createUiGateway(options: UiGatewayOptions): UiGateway {
         } satisfies UiServerMessage)
         return
       }
+      case 'pet/thumb': {
+        const id = typeof message.id === 'string' ? message.id : ''
+        if (id === '') {
+          send(socket, { kind: 'error', message: '缺少宠物 id' })
+          return
+        }
+        // 卡片缩略图（96×104 webp，~9KB）：失败返回 null，前端保留占位样式。
+        const dataUrl = await controller.petThumbnail(id)
+        send(socket, { kind: 'pet-thumb', id, dataUrl } satisfies UiServerMessage)
+        return
+      }
       case 'activity/get':
         send(socket, { kind: 'activity', activity: controller.activitySnapshot() } satisfies UiServerMessage)
         return
@@ -386,13 +399,22 @@ export function createUiGateway(options: UiGatewayOptions): UiGateway {
     void sendState(socket)
   }
 
+  /**
+   * 上一次已广播的 state-sync 内容指纹（B：源头去重）。
+   *
+   * DSH 会话活跃时 controller 会高频通知，而绝大多数通知产出的快照**逐字节相同**
+   * （实测最忙一分钟 511 次/窗口）。内容没变就直接不发：省掉 pet server 的序列化
+   * 与发送，也省掉所有窗口的解析 + DOM 更新 + 日志（前端那层去重只是末端兜底）。
+   */
+  let lastStateSyncKey: string | null = null
+
   // Subscribe once so all connected UI windows receive live settings/agent/
   // activity changes without each socket adding duplicate listeners.
   const unsubscribe = controller.subscribe(() => {
     if (stopped) return
     const activities = controller.activityList()
     const tray = controller.trayActivities()
-    broadcast({
+    const payload = {
       kind: 'state-sync',
       settings: controller.getSettings(),
       agents: controller.agents(),
@@ -400,7 +422,11 @@ export function createUiGateway(options: UiGatewayOptions): UiGateway {
       activities,
       tray,
       allActivities: controller.allActivities(),
-    } satisfies UiServerMessage)
+    } satisfies UiServerMessage
+    const key = JSON.stringify(payload)
+    if (key === lastStateSyncKey) return
+    lastStateSyncKey = key
+    broadcast(payload)
   })
 
   function stop(): void {

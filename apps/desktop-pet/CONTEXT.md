@@ -17,8 +17,17 @@ _Avoid_: 市场卡片, 宠物记录
 _Avoid_: 导入, 下载
 
 **缩略图 (Thumbnail)**:
-由服务端从 sprite 首帧（192×208）裁剪并缩放生成的 webp data URL（约 9KB），前端懒加载并使用客户端 slug→dataURL 缓存回填；不直接加载 petdex CDN 图片。下载带 60s 超时 + 6 并发信号量 + 429/5xx 重试；生成失败经 `market/thumb-error` 下发，前端退避重试（3s→6s→12s，最多 3 次）后静默留空。
-_Avoid_: 封面, 预览图
+由服务端从 sprite 首帧（192×208）裁剪并缩放生成的 webp data URL（约 9KB），前端懒加载并使用客户端 id→dataURL 缓存回填；不直接加载 petdex CDN 图片。下载带 60s 超时 + 6 并发信号量 + 429/5xx 重试；生成失败经 `market/thumb-error` 下发，前端退避重试（3s→6s→12s，最多 3 次）后静默留空。**市场卡片与本地宠物卡片共用同一套**（`pet-thumbnail.ts`；本地走内部协议 `pet/thumb`，读图集用 `library.loadSpriteBuffer`，不转 base64、不进整张精灵 LRU）；本地卡片以前直接铺整张精灵，5 只就把设置窗渲染进程堆顶到 ~100MB。
+_Avoid_: 封面, 预览图, 卡片直接铺整张精灵（`backgroundSize: 512px 576px` 那套已废弃）
+
+**状态广播去重 (State-sync Dedupe)**:
+`ui-gateway` 的 `controller.subscribe` 回调在广播 `state-sync` 前先比对该消息的 JSON 指纹，**内容没变就不发**。DSH 会话活跃时 controller 会高频通知，但绝大多数通知产出的快照逐字节相同（改造前实测最忙一分钟 511 次/窗口）——源头去掉后，pet server 的序列化/发送与所有窗口的解析+DOM更新+日志一起省掉（前端 `petLog` 那层去重只是末端兜底）。注意：真实变化（settings/agents/activity/tray 任一不同）必须照发，别把变化吞掉。
+_Avoid_: 前端去重当唯一防线, 无脑节流（会把真实状态变化延迟）, 每窗口各自订阅 controller
+
+**帧步进唤醒 (Frame-paced Ticking)**:
+`dom-pet-renderer` 不再用 `requestAnimationFrame` 每 16ms 空转：`nextFrameDelayMs(anim, elapsed)` 按图集 timing 算出**到下一帧边界**的毫秒数再 `setTimeout`（最小 4ms、最大 1000ms；单帧动画与"已播完的 once 动画"长睡）。`frameRate > 0` 仍可显式指定固定节流间隔。
+_Avoid_: 60Hz 空转 rAF（图集帧时长本就是 140ms 量级）, 固定 16ms 定时器
+
 
 **动态分页 (Dynamic Pagination)**:
 市场按"网格实际列数 × 3 行"计算每页数量（如 9 列 → 27 个/页），保证整页铺满；窗口缩放列数变化时自动重排当前页。
@@ -63,6 +72,19 @@ _Avoid_: 只落 localStorage（服务端才是权威）, 静默丢弃（已修�
 **托盘会话聚焦 (Tray Session Focus)**:
 托盘点会话 = 网页内切换会话（`sessions.open`）**加上**把承载 GUI 的浏览器窗口/标签页带到前台，两层缺一不可（只切会话用户看不到，只置前窗口用户看到的是别的标签页）。识别 GUI 靠页面标题 `<会话标题> — DeepSeek Harness` 里的产品名标记（`dsh_focus.rs` 的 `DSH_MARKER`，会话标题用于多 GUI 标签页消歧）；**窗口标题只反映活动标签页**，所以“GUI 在后台标签页”时用 UI Automation 读标签页列表并 `SelectionItemPattern.Select()` 选中它。Windows 实现在 `src-tauri/src/dsh_focus.rs`。
 _Avoid_: 按「窗口标题含 deepseek」匹配（旧 bug 根源：DeepSeek 官网/搜索页也含它 → 误判成 GUI 窗口，只置前不切标签页）, 只置前不切标签页, 每点一次开一个新标签页
+
+**设置窗按显隐挂载/卸载 (Settings Mount Lifecycle)**:
+设置窗由 `tauri.conf.json` 以 `visible:false` 预创建（为预布局/避免创建期闪现），但**只在显示期间持有内容**：启动时不挂载，`settings-shown` 时挂载，`settings-hidden`（关闭被拦成 hide 之后）时**卸载**——`app.dispose()`（解绑全局监听/定时器/缩略图观察者 + 停 3 个动画渲染器 + 清空 `petData`/DOM）+ `client.close()`。整套设置 UI 常驻实测渲染进程 ~107MB（空页面 ~15MB），大头是本地宠物页几张整张精灵解码后的位图。信号：主进程 `open_settings_window` 在 `show()` **之前** emit 的 `settings-shown`、`CloseRequested`→hide 后 emit 的 `settings-hidden`、DOM `visibilitychange` 兜底，另加启动时一次 `isVisible()` 检查；全部幂等，不轮询（隐藏窗口保持零活动）。挂载时才建 ui-client，由它取一份全量快照，因此不会显示过时数据。
+实测（2026-09-11，9 进程私有工作集，基线=从未打开过设置窗）：从未打开 ~206MB → 打开时 ~400MB → 关闭卸载后 ~230MB（≈回到基线 +24MB）。**卸载能立刻还回 GPU 进程的 ~145MB；渲染进程的堆必须靠 `location.reload()` 才肯归还**（只清 DOM 时渲染进程稳定停在 ~108MB，重载后降到 ~78MB）——重载发生在窗口隐藏期间，用户不可见，下次显示时页面已就绪。
+_Avoid_: 启动即建设置 UI（隐藏窗口白养一套前端）, 关闭时不卸载（马甲窗常驻整套 UI，~282MB）, 卸载后不重载（渲染进程堆不归还）, 隐藏窗口轮询可见性, 挂载前缓存快照再回放（重复实现一遍快照状态）
+
+**设置窗铺满工作区 (Settings Work-Area Expand)**:
+设置窗首次显示时铺满显示器工作区（走隐藏期的 `set_size`/`set_position`，不用 `maximized` 创建——tao 创建期会先 SW_MAXIMIZE 让窗口闪现，见 `main.rs`）。**实测推迟到首次打开再做并不省内存**（2026-09-11 A/B：隐藏窗口铺满工作区但内容为空时，渲染进程/GPU 与其 520×640 版本几乎无差，GPU 差在噪声内），因此保留启动时预展开。
+_Avoid_: 用 maximized 创建（启动瞬间全屏闪现）, 把它当作内存优化项
+
+**桌宠日志 (Pet Log)**:
+前端 `petLog` 双写 console 与 `%USERPROFILE%\dsh-pet.log`（`pet_log_append`）。Rust 侧**常驻文件句柄**（不再每行 open/close），超 **2MB 轮转**为 `dsh-pet.log.old`（只留一份；Windows 上改名要求先释放句柄）。前端按**键去重**：同一行（scope+message+data）在 5s 窗口内只落一次，行尾 `×N` 是这一行代表的重复次数——状态同步（`applyActivity`/`applyTray`/`setState`）逐轮交替出现，只压"相邻重复"没用（实测仅 1.5×），按键去重实测约 4×~6×（最忙的一分钟 ~40×）。
+_Avoid_: 逐行 open/close 文件, 只做相邻行去重, 无上限增长（旧版 3MB/小时）
 
 ## 外观与语言（方案要点）
 

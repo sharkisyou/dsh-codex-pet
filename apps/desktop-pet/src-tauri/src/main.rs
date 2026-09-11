@@ -4,7 +4,7 @@ use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Manager,
+    Emitter, Manager,
 };
 
 mod dsh_focus;
@@ -15,15 +15,28 @@ const SETTINGS_WINDOW_LABEL: &str = "settings";
 const TRAY_WINDOW_LABEL: &str = "tray";
 /// 托盘窗口与宠物窗口之间的间距（物理像素）。
 const TRAY_GAP_PX: i32 = 4;
+/// 设置窗显示后广播给前端的信号：前端收到才挂载设置 UI。
+const SETTINGS_SHOWN_EVENT: &str = "settings-shown";
+/// 设置窗隐藏（关闭被拦成 hide）后广播：前端收到即卸载设置 UI，把内存还回去。
+const SETTINGS_HIDDEN_EVENT: &str = "settings-hidden";
+/// 前端日志文件名与大小上限（超过即轮转，旧文件留一份 `.old`）。
+const PET_LOG_FILE_NAME: &str = "dsh-pet.log";
+const PET_LOG_MAX_BYTES: u64 = 2 * 1024 * 1024;
 
 /// 打开设置窗口：显示并聚焦。
 /// 窗口由 tauri.conf.json 声明（visible:false 启动隐藏），关闭时被拦截为
 /// 隐藏而非销毁，因此此处始终能找到并重新显示。
+///
+/// 显示之后广播 `settings-shown`：设置窗前端**隐藏期间不挂载**整套设置 UI
+/// （省下一个常驻的渲染进程/连接），靠这条信号在真正显示时才挂载。
 #[tauri::command]
 fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
     let Some(window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) else {
         return Err("设置窗口不存在".into());
     };
+    // 先广播再显示：前端收到即开始建 DOM，构建时间与 show 的往返重叠，
+    // 缩短"窗口已上屏但内容还没建好"的空窗时间。
+    let _ = window.emit(SETTINGS_SHOWN_EVENT, ());
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
     Ok(())
@@ -136,6 +149,26 @@ fn focus_dsh_gui(title: Option<String>) -> Result<(), String> {
     Ok(())
 }
 
+/// 把设置窗铺满当前显示器的工作区（**窗口仍隐藏时调用**）。
+///
+/// 不能用 `maximized` 创建：tao 创建期会先 SW_MAXIMIZE（窗口短暂可见）再
+/// set_visible(false)，中间 webview 创建的消息泵会让这一帧上屏——启动瞬间全屏闪现
+/// （用户录屏 GIF f-034 帧证实）。`set_size`/`set_position` 走 SetWindowPos，不显示
+/// 窗口；webview 在隐藏期间完成全尺寸布局，打开设置即满屏满内容。窗口状态为
+/// 「还原」而非「最大化」。
+fn expand_settings_to_work_area(window: &tauri::WebviewWindow) {
+    let monitor = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten());
+    if let Some(m) = monitor {
+        let wa = m.work_area();
+        let _ = window.set_position(tauri::PhysicalPosition::new(wa.position.x, wa.position.y));
+        let _ = window.set_size(tauri::PhysicalSize::new(wa.size.width, wa.size.height));
+    }
+}
+
 /// 日志目录：Windows 用 %USERPROFILE%，其余平台用 $HOME，都取不到时落当前目录。
 fn log_dir() -> std::path::PathBuf {
     std::env::var("USERPROFILE")
@@ -144,24 +177,76 @@ fn log_dir() -> std::path::PathBuf {
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
+/// 前端日志的落盘句柄：**常驻打开**，不再每行 open/close（实测 2 小时 4.4 万行，
+/// 每行一次 open+close 纯属浪费）；超过 `PET_LOG_MAX_BYTES` 先把旧文件改名
+/// `dsh-pet.log.old`（只留一份）再重开，避免长期运行把日志写到几百 MB。
+#[derive(Default)]
+struct PetLog {
+    file: Option<std::fs::File>,
+    size: u64,
+}
+
+struct PetLogState(std::sync::Mutex<PetLog>);
+
+impl PetLog {
+    fn path() -> std::path::PathBuf {
+        log_dir().join(PET_LOG_FILE_NAME)
+    }
+
+    fn open(&mut self) -> Result<(), String> {
+        let path = Self::path();
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|e| format!("无法打开日志文件 {}: {e}", path.display()))?;
+        self.size = file.metadata().map(|m| m.len()).unwrap_or(0);
+        self.file = Some(file);
+        Ok(())
+    }
+
+    /// 追加一行；超限先轮转。
+    fn append(&mut self, line: &str) -> Result<(), String> {
+        use std::io::Write;
+        if self.file.is_none() {
+            self.open()?;
+        }
+        let mut bytes = Vec::with_capacity(line.len() + 1);
+        bytes.extend_from_slice(line.as_bytes());
+        bytes.push(b'\n');
+        if self.size + bytes.len() as u64 > PET_LOG_MAX_BYTES {
+            self.rotate()?;
+        }
+        let file = self.file.as_mut().ok_or_else(|| "日志句柄未就绪".to_string())?;
+        file.write_all(&bytes)
+            .map_err(|e| format!("写日志失败: {e}"))?;
+        self.size += bytes.len() as u64;
+        Ok(())
+    }
+
+    /// 轮转：旧文件改名 `.old` 后重新打开（Windows 上句柄未释放时改名会失败，
+    /// 所以先把 `self.file` 置空）。
+    fn rotate(&mut self) -> Result<(), String> {
+        self.file = None;
+        let path = Self::path();
+        let _ = std::fs::rename(&path, path.with_extension("log.old"));
+        self.size = 0;
+        self.open()
+    }
+}
+
 /// 前端日志组件：把一行日志追加到 `dsh-pet.log`（Windows: `%USERPROFILE%`，
 /// 其余平台: `$HOME`），便于事后排查桌宠 UI/动画问题（无 devtools 时）。
 /// 调用方已 console.log。
 #[tauri::command]
-fn pet_log_append(line: String) -> Result<(), String> {
-    let path = log_dir().join("dsh-pet.log");
-    use std::io::Write;
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| format!("无法打开日志文件 {}: {e}", path.display()))?;
-    let _ = writeln!(file, "{line}");
-    Ok(())
+fn pet_log_append(state: tauri::State<'_, PetLogState>, line: String) -> Result<(), String> {
+    let mut log = state.0.lock().map_err(|_| "日志句柄锁已中毒".to_string())?;
+    log.append(&line)
 }
 
 fn main() {
     tauri::Builder::default()
+        .manage(PetLogState(std::sync::Mutex::new(PetLog::default())))
         .setup(|app| {
             let toggle = MenuItem::with_id(app, "toggle", "唤醒/隐藏", true, None::<&str>)?;
             let settings = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
@@ -204,12 +289,14 @@ fn main() {
 
             // 设置窗口「关闭」改为隐藏而非销毁：这样右键菜单/托盘再次打开时
             // 窗口仍存在（get_webview_window 可命中），避免动态重建的 URL 问题。
+            // 隐藏后广播 `settings-hidden`：前端据此卸载整套设置 UI（省 ~80MB）。
             if let Some(settings_window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
                 let window = settings_window.clone();
                 settings_window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
                         let _ = window.hide();
+                        let _ = window.emit(SETTINGS_HIDDEN_EVENT, ());
                     }
                 });
             }
@@ -228,27 +315,12 @@ fn main() {
                 });
             }
 
-            // 设置窗预展开到整个工作区（仍隐藏）。不能用 maximized 创建：
-            // tao 创建期会先 SW_MAXIMIZE（窗口短暂可见）再 set_visible(false)，
-            // 中间 webview 创建的消息泵会让这一帧上屏——启动瞬间全屏闪现
-            // （用户录屏 GIF f-034 帧证实）。set_size/set_position 走
-            // SetWindowPos，不显示窗口；webview 在隐藏期间完成全尺寸布局，
-            // 打开设置即满屏满内容。窗口状态为「还原」而非「最大化」。
+            // 设置窗预展开到整个工作区（仍隐藏），见 `expand_settings_to_work_area`。
+            // 实测（2026-09-11）：把它推迟到首次打开再做**并不省内存**——隐藏窗口
+            // 铺满工作区但内容为空时，渲染进程/GPU 与其小尺寸版本几乎无差；
+            // 真正吃内存的是"隐藏窗口里挂着整套设置 UI"，已由前端懒挂载解决。
             if let Some(settings_window) = app.get_webview_window(SETTINGS_WINDOW_LABEL) {
-                let monitor = settings_window
-                    .current_monitor()
-                    .ok()
-                    .flatten()
-                    .or_else(|| settings_window.primary_monitor().ok().flatten());
-                if let Some(m) = monitor {
-                    let wa = m.work_area();
-                    let _ = settings_window.set_position(tauri::PhysicalPosition::new(
-                        wa.position.x, wa.position.y,
-                    ));
-                    let _ = settings_window.set_size(tauri::PhysicalSize::new(
-                        wa.size.width, wa.size.height,
-                    ));
-                }
+                expand_settings_to_work_area(&settings_window);
             }
 
             Ok(())

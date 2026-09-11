@@ -2,9 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  MAX_WAKE_MS,
+  MIN_WAKE_MS,
   ROWS,
   buildFallbackStates,
   nextAnimationName,
+  nextFrameDelayMs,
   resolveAnimation,
 } from '../src/dom-pet-renderer'
 
@@ -81,4 +84,26 @@ test('nextAnimationName 未声明点击技能时轮播全部动作（点击一�
 test('nextAnimationName 空状态与空声明返回 null', () => {
   assert.equal(nextAnimationName(null, [], {}), null)
   assert.equal(nextAnimationName(null, null, {}), null)
+})
+
+test('nextFrameDelayMs 按帧边界唤醒（不再每 16ms 空转）', () => {
+  const anim = { frameCount: 4, timingMs: [100, 200, 300, 400], playback: 'loop' as const }
+  assert.equal(nextFrameDelayMs(anim, 0), 100)
+  assert.equal(nextFrameDelayMs(anim, 50), 50)
+  assert.equal(nextFrameDelayMs(anim, 100), 200)
+  assert.equal(nextFrameDelayMs(anim, 999), MIN_WAKE_MS) // 边界前也留最小间隔，避免忙循环
+  assert.equal(nextFrameDelayMs(anim, 1000), 100) // 一个循环结束，回到首帧边界
+})
+
+test('nextFrameDelayMs：单帧与已播完的一次性动画长睡', () => {
+  assert.equal(nextFrameDelayMs({ frameCount: 1 }, 0), MAX_WAKE_MS)
+  const once = { frameCount: 3, timingMs: [100, 100, 100], playback: 'once' as const }
+  assert.equal(nextFrameDelayMs(once, 0), 100)
+  assert.equal(nextFrameDelayMs(once, 300), MAX_WAKE_MS) // render() 会切回 idle
+})
+
+test('nextFrameDelayMs：缺 timing 时用兜底帧时长 140ms', () => {
+  const anim = { frameCount: 2 }
+  assert.equal(nextFrameDelayMs(anim, 0), 140)
+  assert.equal(nextFrameDelayMs(anim, 140), 140)
 })

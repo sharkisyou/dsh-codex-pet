@@ -12,8 +12,8 @@
 
 import { createRequire } from 'node:module'
 import { parsePetJson, type ParsedPet } from '@yshark/pet-core'
-import sharp from 'sharp'
 
+import { spriteThumbDataUrl } from './pet-thumbnail.js'
 import type { MarketInstallResult, MarketManifest, MarketPet } from './market-types.js'
 
 const require = createRequire(import.meta.url)
@@ -426,17 +426,9 @@ export function createMarket(options: MarketOptions = {}): Market {
         sprite = await download(pet.spritesheetUrl, maxSpriteBytes)
         putSprite(pet.slug, sprite)
       }
-      // 裁出 sprite 首帧（左上 192x208）并缩到 96x104，转 webp 减小体积。
-      // 小尺寸/非标准 sprite 兜底为整体裁剪，避免 extract 越界导致整张失败。
-      const meta = await sharp(sprite).metadata()
-      const frameWidth = Math.min(192, meta.width ?? 192)
-      const frameHeight = Math.min(208, meta.height ?? 208)
-      const thumb = await sharp(sprite)
-        .extract({ left: 0, top: 0, width: frameWidth, height: frameHeight })
-        .resize(96, 104, { fit: 'fill' })
-        .webp({ quality: 82 })
-        .toBuffer()
-      const dataUrl = `data:image/webp;base64,${thumb.toString('base64')}`
+      // 裁出 sprite 首帧（左上 192x208）并缩到 96x104 转 webp —— 与本地宠物
+      // 卡片共用同一个助手（含小尺寸/非标准图集的兜底裁剪）。
+      const dataUrl = await spriteThumbDataUrl(sprite)
       cacheThumb(pet.slug, dataUrl)
       return dataUrl
     } catch (error) {

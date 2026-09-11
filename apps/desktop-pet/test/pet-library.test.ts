@@ -162,3 +162,31 @@ test('resolveLibraryRoot prefers explicit root then env then home subpath', () =
 test('exposes a large default sprite limit', () => {
   assert.ok(DEFAULT_MAX_SPRITE_BYTES >= 25 * 1024 * 1024)
 })
+
+test('loadSpriteBuffer 只读图集原始字节（缩略图路径，不转 base64）', async () => {
+  const root = await makeTempRoot()
+  try {
+    await makePetDir(root, 'alpha')
+    const library = createPetLibrary({ root })
+
+    const buffer = await library.loadSpriteBuffer('alpha')
+    assert.ok(buffer.ok, '应能读到图集')
+    if (buffer.ok) {
+      assert.equal(buffer.value.width, CELL_W * 8)
+      assert.equal(buffer.value.height, CELL_H)
+      assert.equal(buffer.value.mime, 'image/png')
+      assert.equal(buffer.value.atlasRows, 1)
+      assert.ok(buffer.value.bytes.byteLength > 0)
+      assert.ok(!('spriteDataUrl' in (buffer.value as unknown as Record<string, unknown>)), '不应带 base64 data URL')
+    }
+
+    // 非法 id / 不存在的宠物：与 loadPet 同一套错误映射。
+    const illegal = await library.loadSpriteBuffer('../evil')
+    assert.equal(illegal.ok, false)
+    const missing = await library.loadSpriteBuffer('nope')
+    assert.equal(missing.ok, false)
+    if (!missing.ok) assert.equal(missing.error, '宠物不存在')
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

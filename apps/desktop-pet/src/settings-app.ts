@@ -41,8 +41,10 @@ export interface SettingsApp {
   setPets(pets: AppStateSnapshot['pets']): void
   setSettings(settings: AppStateSnapshot['settings']): void
   setError(message: string | null): void
-  /** 收到某个宠物的完整数据（pet/get 响应），用于预览与缩略图。 */
+  /** 收到某个宠物的完整数据（pet/get 响应），用于预览（整张精灵）。 */
   setPetPayload(payload: { id: string; pet: ParsedPet; spriteDataUrl: string }): void
+  /** 收到某只本地宠物的卡片缩略图（pet/thumb 响应，96×104 webp data URL）。 */
+  setPetThumb(payload: { id: string; dataUrl: string | null }): void
   /** 在线市场列表（market/list 响应，含分页信息与类型集合）。 */
   setMarketPets(payload: { pets: MarketPet[]; total: number; page: number; pageSize: number; kinds: string[] }): void
   /** 市场列表加载失败：必须复位加载态，否则「下一页/搜索」会永远无响应。 */
@@ -57,6 +59,8 @@ export interface SettingsApp {
   setMarketThumbError(payload: { slug: string }): void
   /** 某只市场宠物的详情（market/pet 响应，用于大图预览）。 */
   setMarketPet(payload: { slug: string; pet: ParsedPet | null; spriteDataUrl: string | null }): void
+  /** 卸载：解绑监听/定时器/渲染器并清空 DOM（隐藏时调用，释放整张精灵与整页 DOM）。 */
+  dispose(): void
 }
 
 function h(tag: string, className?: string, text?: string): HTMLElement {
@@ -574,9 +578,11 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     if (Date.now() - marketDetailOpenedAtMs < MARKET_DETAIL_OPEN_DEBOUNCE_MS) return
     closeMarketDetail()
   })
-  document.addEventListener('keydown', (event) => {
+  /** Esc 关闭市场详情弹窗（具名以便 dispose 解绑）。 */
+  function onDocumentKeydown(event: KeyboardEvent): void {
     if (event.key === 'Escape' && !marketDetail.hidden) closeMarketDetail()
-  })
+  }
+  document.addEventListener('keydown', onDocumentKeydown)
 
   marketDetailInstall.addEventListener('click', () => {
     if (!detailPet || installingSlugs.has(detailPet.slug) || isMarketInstalled(detailPet)) return
@@ -843,14 +849,15 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
 
   // 窗口缩放改变列数时，重新请求当前页以保持整页铺满。
   let lastMarketColumns = 0
-  window.addEventListener('resize', () => {
+  function onWindowResize(): void {
     const cols = marketColumnCount()
     if (cols !== lastMarketColumns && !marketLoading && marketPets.length > 0) {
       lastMarketColumns = cols
       requestMarket()
     }
     lastMarketColumns = cols
-  })
+  }
+  window.addEventListener('resize', onWindowResize)
 
   function setMarketPets(payload: { pets: MarketPet[]; total: number; page: number; pageSize: number; kinds: string[] }): void {
     // 预取响应：缓存下一页列表并预载缩略图，不渲染（不打断当前页）。
@@ -1086,7 +1093,11 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     })
   }
 
-  systemDarkQuery.addEventListener('change', () => applyTheme())
+  /** OS 深浅色切换（具名以便 dispose 解绑）。 */
+  function onSystemThemeChange(): void {
+    applyTheme()
+  }
+  systemDarkQuery.addEventListener('change', onSystemThemeChange)
 
   /* ---------- 语言应用 ---------- */
 
@@ -1142,14 +1153,37 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     client.requestPet(id)
   }
 
-  /** 把缓存的精灵首帧铺到卡片缩略图上。 */
-  function applyThumbSprite(thumb: HTMLElement | null | undefined, id: string): void {
-    const data = petData.get(id)
-    if (!thumb || !data) return
-    thumb.style.backgroundImage = `url("${data.spriteDataUrl}")`
-    thumb.style.backgroundSize = '512px 576px'
-    thumb.style.backgroundPosition = '0 0'
+  // 卡片缩略图缓存：小图（~9KB）与 petData（整张精灵 ~2-4MB + 解码位图 ~11MB）
+  // 分开——卡片只要小图，整张精灵只在预览/悬停真正需要时才取。
+  const petThumbCache = new Map<string, string>()
+  const requestedThumbIds = new Set<string>()
+
+  function requestPetThumb(id: string): void {
+    if (requestedThumbIds.has(id)) return
+    requestedThumbIds.add(id)
+    client.requestPetThumb(id)
+  }
+
+  /** 把缩略图铺到卡片上（与市场卡片同一套铺法）。 */
+  function applyThumbImage(thumb: HTMLElement | null | undefined, dataUrl: string): void {
+    if (!thumb) return
+    thumb.style.backgroundImage = `url("${dataUrl}")`
+    thumb.style.backgroundSize = '100% 100%'
+    thumb.style.backgroundPosition = 'center'
     thumb.style.backgroundRepeat = 'no-repeat'
+  }
+
+  /** 卡片缩略图就绪：回填所有同 id 的卡片（列表重建后也能命中缓存）。 */
+  function setPetThumb(payload: { id: string; dataUrl: string | null }): void {
+    if (payload.dataUrl === null) {
+      // 生成失败：允许下次列表重绘时重试，卡片保持占位样式。
+      requestedThumbIds.delete(payload.id)
+      return
+    }
+    petThumbCache.set(payload.id, payload.dataUrl)
+    root.querySelectorAll<HTMLElement>('[data-thumb="1"]').forEach((thumb) => {
+      if (thumb.dataset.petId === payload.id) applyThumbImage(thumb, payload.dataUrl as string)
+    })
   }
 
   /** 在预览区渲染指定宠物（动画）；null 表示清空。 */
@@ -1243,8 +1277,10 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
       const thumb = h('div', 'pet-card-thumb')
       thumb.dataset.petId = pet.id
       thumb.dataset.thumb = '1'
-      applyThumbSprite(thumb, pet.id)
-      requestPetData(pet.id)
+      // 卡片只要缩略图（~9KB）；整张精灵只在预览/悬停时按需请求。
+      const cachedThumb = petThumbCache.get(pet.id)
+      if (cachedThumb) applyThumbImage(thumb, cachedThumb)
+      else requestPetThumb(pet.id)
       // 点击缩略图：预览窗口显示该宠物并播放下一个动作（循环播放）。
       // 数据未加载完成时（is-loaded 未就绪）不播放，避免对空画布无效操作。
       thumb.addEventListener('click', (event) => {
@@ -1442,9 +1478,6 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
   function setPetPayload(payload: { id: string; pet: ParsedPet; spriteDataUrl: string }): void {
     const { id, pet, spriteDataUrl } = payload
     petData.set(id, { pet, spriteDataUrl })
-    root.querySelectorAll<HTMLElement>('[data-thumb="1"]').forEach((thumb) => {
-      if (thumb.dataset.petId === id) applyThumbSprite(thumb, id)
-    })
     if (id === previewPetId) {
       previewRenderer.setPet(pet)
       previewRenderer.setSprite(spriteDataUrl)
@@ -1457,6 +1490,44 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     }
   }
 
+  /**
+   * 卸载：解绑全局监听、清掉定时器/缩略图观察者、停掉三个动画渲染器并清空 DOM。
+   *
+   * 设置窗隐藏时调用（见 `main.ts` 的挂载生命周期）：整套设置 UI 常驻实测多占
+   * ~80MB——渲染进程 107MB vs 空页面 ~15MB，大头是本地宠物页那几张整张精灵
+   * （192×8 × 208×9 解码后每张 ~11MB）。这里只负责把引用放掉；渲染进程的堆
+   * 还要靠调用方在隐藏期间 `location.reload()` 才真正归还给系统。
+   * 代价：重新打开会重建 DOM 并重新取快照，市场页的分页/搜索/滚动位置回到初始值。
+   */
+  function dispose(): void {
+    clearPrefetch()
+    if (marketSearchTimer !== null) {
+      clearTimeout(marketSearchTimer)
+      marketSearchTimer = null
+    }
+    if (marketDetailHideTimer !== null) {
+      clearTimeout(marketDetailHideTimer)
+      marketDetailHideTimer = null
+    }
+    if (zoomTimer !== null) {
+      clearTimeout(zoomTimer)
+      zoomTimer = null
+    }
+    document.removeEventListener('keydown', onDocumentKeydown)
+    window.removeEventListener('resize', onWindowResize)
+    systemDarkQuery.removeEventListener('change', onSystemThemeChange)
+    marketThumbObserver?.disconnect()
+    marketThumbObserver = null
+    previewRenderer.dispose()
+    hoverRenderer.dispose()
+    marketDetailRenderer.dispose()
+    // 释放整张精灵 data URL 与解码位图：清引用后由 GC 回收（卸载的主要收益）。
+    petData.clear()
+    marketThumbCache.clear()
+    petThumbCache.clear()
+    root.innerHTML = ''
+  }
+
   const app: SettingsApp = {
     root,
     update,
@@ -1465,6 +1536,7 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     setSettings,
     setError,
     setPetPayload,
+    setPetThumb,
     setMarketPets,
     setMarketListError,
     markMarketInstalled,
@@ -1472,6 +1544,7 @@ export function mountSettingsApp(root: HTMLElement, client: UiClient): SettingsA
     setMarketThumb,
     setMarketThumbError,
     setMarketPet,
+    dispose,
   }
   // 挂收尾时统一应用一次语言（重写静态文案 + 重算动态文案）。
   // 不能提前：renderPetList 等依赖的 petData 等常量在渲染段才初始化。
